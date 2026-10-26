@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import FastAPI, Header, HTTPException, status
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
@@ -24,6 +24,12 @@ app.add_middleware(
 
 VALID_CONDITIONS = {"like_new", "good", "acceptable", "heavily_used"}
 DEMO_USERS = {"demo-user-1", "demo-user-2"}
+MAX_BOOK_IMAGE_SIZE_BYTES = 2 * 1024 * 1024
+IMAGE_SIGNATURES = {
+    "image/jpeg": lambda content: content.startswith(b"\xff\xd8\xff"),
+    "image/png": lambda content: content.startswith(b"\x89PNG\r\n\x1a\n"),
+    "image/webp": lambda content: len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP",
+}
 
 
 class ListingCreate(BaseModel):
@@ -270,6 +276,28 @@ def get_listing_by_id(listing_id: str) -> dict[str, object]:
         return supabase.get_listing(listing_id)
     item = _get_listing_or_404(listing_id)
     return _normalize_listing(item).model_dump(mode="json")
+
+
+@app.post("/api/v1/listing-images", status_code=status.HTTP_201_CREATED)
+def upload_listing_image(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> dict[str, str]:
+    seller_id = _require_auth(authorization)
+    content = file.file.read(MAX_BOOK_IMAGE_SIZE_BYTES + 1)
+    if len(content) > MAX_BOOK_IMAGE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Book photos must be 2 MB or smaller")
+
+    content_type = file.content_type or ""
+    signature_check = IMAGE_SIGNATURES.get(content_type)
+    if not content or signature_check is None or not signature_check(content):
+        raise HTTPException(status_code=415, detail="Upload a valid JPEG, PNG, or WebP image")
+
+    supabase = get_supabase_service()
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Book photo uploads require Supabase storage")
+
+    return {"url": supabase.upload_listing_image(seller_id, content, content_type)}
 
 
 @app.post("/api/v1/listings", status_code=status.HTTP_201_CREATED)

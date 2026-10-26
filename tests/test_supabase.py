@@ -78,6 +78,33 @@ def test_supabase_auth_identity_is_used_to_create_listing(monkeypatch: pytest.Mo
     assert response.json()["seller_name"] == "Reader"
 
 
+def test_authenticated_book_photo_upload_uses_supabase_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id = "b797b8b4-09c5-4f7f-90d4-e89a595c6c4b"
+    monkeypatch.setenv("BOOKNOOK_STORAGE", "supabase")
+    monkeypatch.setenv("SUPABASE_URL", "https://project.example")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test-key")
+    monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: httpx.Response(200, json={"id": user_id}))
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, *, content: bytes, headers: dict[str, str], timeout: float) -> httpx.Response:
+        captured.update({"url": url, "content": content, "headers": headers})
+        return httpx.Response(200, json={"Key": "book-images/path.png"})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    content = b"\x89PNG\r\n\x1a\nsmall image"
+    response = TestClient(main.app).post(
+        "/api/v1/listing-images",
+        headers={"Authorization": "Bearer valid-user-token"},
+        files={"file": ("book.png", content, "image/png")},
+    )
+
+    assert response.status_code == 201
+    assert captured["url"].startswith(f"https://project.example/storage/v1/object/book-images/{user_id}/")
+    assert captured["content"] == content
+    assert captured["headers"]["apikey"] == "sb_secret_test-key"
+    assert response.json()["url"].startswith("https://project.example/storage/v1/object/public/book-images/")
+
+
 def test_supabase_mode_does_not_accept_demo_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BOOKNOOK_STORAGE", "supabase")
     monkeypatch.setenv("SUPABASE_URL", "https://project.example")

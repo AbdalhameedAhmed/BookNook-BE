@@ -6,6 +6,37 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_book_photo_larger_than_two_mb_is_rejected() -> None:
+    content = b"\x89PNG\r\n\x1a\n" + b"0" * main.MAX_BOOK_IMAGE_SIZE_BYTES
+
+    response = client.post(
+        "/api/v1/listing-images",
+        headers={"Authorization": "Bearer demo-user-1"},
+        files={"file": ("book.png", content, "image/png")},
+    )
+
+    assert response.status_code == 413
+
+
+def test_unauthenticated_users_cannot_upload_book_photos() -> None:
+    response = client.post(
+        "/api/v1/listing-images",
+        files={"file": ("book.png", b"\x89PNG\r\n\x1a\nsmall image", "image/png")},
+    )
+
+    assert response.status_code == 401
+
+
+def test_book_photo_rejects_mismatched_image_content() -> None:
+    response = client.post(
+        "/api/v1/listing-images",
+        headers={"Authorization": "Bearer demo-user-1"},
+        files={"file": ("book.png", b"not an image", "image/png")},
+    )
+
+    assert response.status_code == 415
+
+
 def test_unauthenticated_users_cannot_create_listing() -> None:
     payload = {
         "title": "Fiction Writing",

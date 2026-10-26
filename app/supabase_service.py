@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 import base64
 import json
+from uuid import uuid4
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from dotenv import load_dotenv
@@ -37,6 +39,32 @@ class SupabaseService:
         if not isinstance(user, dict) or not user.get("id"):
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         return user
+
+    def upload_listing_image(self, seller_id: str, content: bytes, content_type: str) -> str:
+        extension = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[content_type]
+        path = f"{seller_id}/{uuid4()}.{extension}"
+        headers = {
+            "apikey": self.api_key,
+            "Content-Type": content_type,
+            "x-upsert": "false",
+        }
+        if self.is_legacy_jwt_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        try:
+            response = httpx.post(
+                f"{self.url}/storage/v1/object/book-images/{path}",
+                content=content,
+                headers=headers,
+                timeout=30,
+            )
+        except httpx.HTTPError as error:
+            raise HTTPException(status_code=503, detail="Image storage service unavailable") from error
+
+        if response.is_error:
+            raise HTTPException(status_code=502, detail="Book photo could not be uploaded")
+
+        return f"{self.url}/storage/v1/object/public/book-images/{quote(path, safe='/')}"
 
     def rest(
         self,
