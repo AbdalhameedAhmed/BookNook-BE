@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from schemas.items import Listing
+from app.schemas.items import Listing
 
 
 LISTINGS: list[dict[str, object]] = [

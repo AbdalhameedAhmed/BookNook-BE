@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile, status
 
-from api.deps import (
+from app.api.deps import (
     _get_authenticated_user,
     _require_auth,
     get_authenticated_user,
     get_current_user_id,
 )
-from core.config import (
+from app.core.config import (
     DEMO_USERS,
     IMAGE_SIGNATURES,
     MAX_BOOK_IMAGE_SIZE_BYTES,
     VALID_CONDITIONS,
 )
-from core.supabase import get_supabase_service
-from crud.crud_item import (
+from app.core.supabase import get_supabase_service
+from app.crud.crud_item import (
     LISTINGS,
     REPORTS,
     REQUESTS,
@@ -25,11 +25,11 @@ from crud.crud_item import (
     _get_transaction_or_404,
     _normalize_listing,
 )
-from schemas.items import ListingCreate, ListingUpdate, ReportCreate, RequestCreate, RequestUpdate
+from app.schemas.items import ListingCreate, ListingUpdate, ReportCreate, RequestCreate, RequestUpdate
 
 router = APIRouter()
 
-@router.get("/api/v1/listings")
+@router.get("/listings")
 def get_listings(
     q: str | None = None,
     listing_type: str | None = None,
@@ -79,7 +79,7 @@ def get_listings(
         "page_size": page_size,
     }
 
-@router.get("/api/v1/listings/{listing_id}")
+@router.get("/listings/{listing_id}")
 def get_listing_by_id(listing_id: str) -> dict[str, object]:
     supabase = get_supabase_service()
     if supabase is not None:
@@ -87,7 +87,7 @@ def get_listing_by_id(listing_id: str) -> dict[str, object]:
     item = _get_listing_or_404(listing_id)
     return _normalize_listing(item).model_dump(mode="json")
 
-@router.post("/api/v1/listing-images", status_code=status.HTTP_201_CREATED)
+@router.post("/listing-images", status_code=status.HTTP_201_CREATED)
 def upload_listing_image(
     file: UploadFile = File(...),
     authorization: str | None = Header(default=None),
@@ -108,7 +108,7 @@ def upload_listing_image(
 
     return {"url": supabase.upload_listing_image(seller_id, content, content_type)}
 
-@router.post("/api/v1/listings", status_code=status.HTTP_201_CREATED)
+@router.post("/listings", status_code=status.HTTP_201_CREATED)
 def create_listing(payload: ListingCreate, authorization: str | None = Header(default=None)) -> dict[str, object]:
     user_id = _require_auth(authorization)
 
@@ -145,7 +145,7 @@ def create_listing(payload: ListingCreate, authorization: str | None = Header(de
     LISTINGS.insert(0, item)
     return {**item, "id": listing_id}
 
-@router.patch("/api/v1/listings/{listing_id}")
+@router.patch("/listings/{listing_id}")
 def update_listing(
     listing_id: str,
     payload: ListingUpdate,
@@ -189,7 +189,7 @@ def update_listing(
     item["status"] = update_data.get("status", item["status"])
     return item
 
-@router.post("/api/v1/listings/{listing_id}/deactivate")
+@router.post("/listings/{listing_id}/deactivate")
 def deactivate_listing(listing_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
     user_id = _require_auth(authorization)
     supabase = get_supabase_service()
@@ -205,7 +205,7 @@ def deactivate_listing(listing_id: str, authorization: str | None = Header(defau
     item["status"] = "inactive"
     return {"status": "inactive", "listing_id": listing_id}
 
-@router.post("/api/v1/listings/{listing_id}/mark-complete")
+@router.post("/listings/{listing_id}/mark-complete")
 def mark_listing_complete(listing_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
     user_id = _require_auth(authorization)
     supabase = get_supabase_service()
@@ -236,7 +236,7 @@ def mark_listing_complete(listing_id: str, authorization: str | None = Header(de
     listing["status"] = final_status
     return {"status": final_status, "listing_id": listing_id}
 
-@router.post("/api/v1/listings/{listing_id}/requests", status_code=status.HTTP_201_CREATED)
+@router.post("/listings/{listing_id}/requests", status_code=status.HTTP_201_CREATED)
 def create_request(
     listing_id: str,
     payload: RequestCreate,
@@ -278,7 +278,7 @@ def create_request(
     REQUESTS.insert(0, request)
     return request
 
-@router.patch("/api/v1/requests/{request_id}")
+@router.patch("/requests/{request_id}")
 def update_request(
     request_id: str,
     payload: RequestUpdate,
@@ -336,7 +336,7 @@ def update_request(
 
     raise HTTPException(status_code=400, detail="Unsupported request status update")
 
-@router.post("/api/v1/reports", status_code=status.HTTP_201_CREATED)
+@router.post("/reports", status_code=status.HTTP_201_CREATED)
 def create_report(payload: ReportCreate, authorization: str | None = Header(default=None)) -> dict[str, object]:
     reporter_id = _require_auth(authorization)
 
@@ -369,7 +369,7 @@ def create_report(payload: ReportCreate, authorization: str | None = Header(defa
     REPORTS.insert(0, report)
     return report
 
-@router.get("/api/v1/reports")
+@router.get("/reports")
 def get_reports(authorization: str | None = Header(default=None)) -> dict[str, object]:
     current_user = _get_authenticated_user(authorization)
     user_id = str(current_user["id"])
@@ -390,7 +390,7 @@ def get_reports(authorization: str | None = Header(default=None)) -> dict[str, o
 
     return {"items": REPORTS}
 
-@router.patch("/api/v1/reports/{report_id}")
+@router.patch("/reports/{report_id}")
 def update_report(
     report_id: str,
     status: str,
@@ -422,7 +422,7 @@ def update_report(
     report["updated_at"] = "2026-10-24T00:00:00Z"
     return report
 
-@router.post("/api/v1/transactions/{transaction_id}/complete")
+@router.post("/transactions/{transaction_id}/complete")
 def complete_transaction(transaction_id: str, authorization: str | None = Header(default=None)) -> dict[str, object]:
     user_id = _require_auth(authorization)
     supabase = get_supabase_service()

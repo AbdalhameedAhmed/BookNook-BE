@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import Header, HTTPException, status
 
-from core.config import DEMO_USERS
-from core.supabase import get_supabase_service
+from app.core.config import DEMO_USERS
+from app.core.supabase import get_supabase_service
 
 
 def get_authenticated_user(

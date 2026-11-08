@@ -2,13 +2,13 @@ from __future__ import annotations
 from fastapi import Header
 from fastapi import APIRouter
 
-from api.deps import _require_auth
-from core.supabase import get_supabase_service
-from crud.crud_item import LISTINGS, REQUESTS, TRANSACTIONS, _normalize_listing
+from app.api.deps import _require_auth
+from app.core.supabase import get_supabase_service
+from app.crud.crud_item import LISTINGS, REQUESTS, TRANSACTIONS, _normalize_listing
 
-profile_router = APIRouter(prefix="/profile", tags=["profile"])
+profile_router = APIRouter(prefix="/me", tags=["profile"])
 
-@profile_router.get("/api/v1/me/listings")
+@profile_router.get("/listings")
 def get_my_listings(authorization: str | None = Header(default=None)) -> dict[str, object]:
     user_id = _require_auth(authorization)
     supabase = get_supabase_service()
@@ -22,7 +22,7 @@ def get_my_listings(authorization: str | None = Header(default=None)) -> dict[st
     ]
     return {"items": my_listings}
 
-@profile_router.get("/api/v1/me/requests")
+@profile_router.get("/requests")
 def get_my_requests(authorization: str | None = Header(default=None)) -> dict[str, object]:
     user_id = _require_auth(authorization)
     supabase = get_supabase_service()
@@ -36,7 +36,7 @@ def get_my_requests(authorization: str | None = Header(default=None)) -> dict[st
     ]
     return {"items": user_requests}
 
-@profile_router.get("/api/v1/me/transactions")
+@profile_router.get("/transactions")
 def get_my_transactions(authorization: str | None = Header(default=None)) -> dict[str, object]:
     user_id = _require_auth(authorization)
     supabase = get_supabase_service()
