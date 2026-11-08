@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from app.supabase_service import get_supabase_service
+from supabase_service import get_supabase_service
 
 
 @pytest.fixture(autouse=True)

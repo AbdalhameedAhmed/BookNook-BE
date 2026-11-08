@@ -2,9 +2,9 @@ from __future__ import annotations
 from fastapi import Header
 from fastapi import APIRouter
 
-from app.api.deps import _require_auth
-from app.core.supabase import get_supabase_service
-from app.crud.crud_item import LISTINGS, REQUESTS, TRANSACTIONS, _normalize_listing
+from api.deps import _require_auth
+from core.supabase import get_supabase_service
+from crud.crud_item import LISTINGS, REQUESTS, TRANSACTIONS, _normalize_listing
 
 profile_router = APIRouter(prefix="/me", tags=["profile"])
 

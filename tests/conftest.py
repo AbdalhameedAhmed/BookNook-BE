@@ -1,6 +1,6 @@
 import pytest
 
-from app.supabase_service import get_supabase_service
+from supabase_service import get_supabase_service
 
 
 @pytest.fixture(autouse=True)

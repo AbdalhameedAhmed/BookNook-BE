@@ -7,7 +7,9 @@ in-memory demo data instead.
 
 try:
     from supabase_service import get_supabase_service as _get_supabase_service
+
 except ModuleNotFoundError as exc:
+
     if exc.name != "supabase_service":
         raise
 

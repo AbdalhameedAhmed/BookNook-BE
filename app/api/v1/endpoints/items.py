@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile, status
 
-from app.api.deps import (
+from api.deps import (
     _get_authenticated_user,
     _require_auth,
     get_authenticated_user,
     get_current_user_id,
 )
-from app.core.config import (
+from core.config import (
     DEMO_USERS,
     IMAGE_SIGNATURES,
     MAX_BOOK_IMAGE_SIZE_BYTES,
     VALID_CONDITIONS,
 )
-from app.core.supabase import get_supabase_service
-from app.crud.crud_item import (
+from core.supabase import get_supabase_service
+from crud.crud_item import (
     LISTINGS,
     REPORTS,
     REQUESTS,
@@ -25,7 +25,7 @@ from app.crud.crud_item import (
     _get_transaction_or_404,
     _normalize_listing,
 )
-from app.schemas.items import ListingCreate, ListingUpdate, ReportCreate, RequestCreate, RequestUpdate
+from schemas.items import ListingCreate, ListingUpdate, ReportCreate, RequestCreate, RequestUpdate
 
 router = APIRouter()
 
@@ -43,6 +43,8 @@ def get_listings(
         raise HTTPException(status_code=400, detail="page_size must be at least 1")
 
     supabase = get_supabase_service()
+    print("supabase 😂😂😂", supabase)
+
     if supabase is not None:
         items, total = supabase.list_listings(
             query=q,
