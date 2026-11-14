@@ -1,0 +1,192 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<!-- Rfoof transactional email layout, from the Stitch screens "Email Template - Confirm Account (HTML)"
+     and "Email Template - Reset Password (HTML)". Slots are filled by core/email.py; every value is HTML-escaped there. -->
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="supported-color-schemes" content="light dark" />
+  <title>{{subject}}</title>
+  <!--[if mso]>
+  <style type="text/css">
+    body, table, td, a { font-family: Arial, sans-serif !important; }
+  </style>
+  <![endif]-->
+  <style type="text/css">
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    @media (prefers-color-scheme: dark) {
+      body, .email-bg { background-color: #121A24 !important; }
+      .email-card { background-color: #1A2431 !important; border-color: #2E3E52 !important; }
+      .text-title { color: #F4F6F3 !important; }
+      .text-body { color: #D1DAEE !important; }
+      .text-muted { color: #8F9FA8 !important; }
+      .link-text { color: #4CB7B3 !important; }
+      .divider { border-top-color: #2E3E52 !important; }
+      .copy-box { background-color: #141C26 !important; border-color: #243242 !important; }
+      .ochre-box { background-color: #262013 !important; border-color: #59400D !important; }
+      .ochre-box p { color: #F4D38B !important; }
+      .footer-text { color: #7B8B95 !important; }
+    }
+    @media only screen and (max-width: 480px) {
+      .email-container { width: 100% !important; padding: 12px !important; }
+      .card-padding { padding: 24px 20px !important; }
+      .btn-cell { padding: 14px 24px !important; }
+    }
+  </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F4F6F3; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <!-- Preheader (inbox preview text) -->
+  <div style="display: none; max-height: 0px; overflow: hidden; mso-hide: all; font-size: 1px; line-height: 1px; color: #F4F6F3; opacity: 0;">
+    {{preheader}}
+    &#847; &zwnj; &nbsp; &#8199; &shy; &#847; &zwnj; &nbsp; &#8199; &shy;
+  </div>
+
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-bg" style="background-color: #F4F6F3; table-layout: fixed;">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <!--[if (gte mso 9)|(IE)]>
+        <table role="presentation" align="center" border="0" cellspacing="0" cellpadding="0" width="600"><tr><td align="center" valign="top" width="600">
+        <![endif]-->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-container" style="max-width: 600px; margin: 0 auto; text-align: left;">
+          <tr>
+            <td class="email-card card-padding" style="background-color: #FFFFFF; border: 1px solid #D6DDD7; border-radius: 12px; padding: 36px 36px 32px 36px;">
+
+              <!-- Logo header: the app icon (inline image) and the bilingual name -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td align="center" style="padding-bottom: 28px;">
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="vertical-align: middle; padding-right: 10px;">
+                          <img src="cid:rfoof-icon" width="28" height="28" alt="" style="display: block; width: 28px; height: 28px; border: 0; border-radius: 6px;" />
+                        </td>
+                        <td style="vertical-align: middle;">
+                          <span class="text-title" style="font-family: Georgia, serif; font-size: 22px; font-weight: bold; color: #17202E; letter-spacing: -0.5px;">Rfoof</span>
+                          <span class="link-text" lang="ar" style="font-family: Tahoma, Arial, sans-serif; font-size: 19px; font-weight: bold; color: #12797B; margin-left: 6px;">رفوف</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- English -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="ltr" style="direction: ltr; text-align: left;">
+                <tr>
+                  <td style="padding-bottom: 12px;">
+                    <h1 class="text-title" style="margin: 0; font-family: Georgia, serif; font-size: 24px; line-height: 32px; font-weight: normal; color: #17202E;">{{en_heading}}</h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom: 24px;">
+                    <p class="text-body" style="margin: 0; font-family: Arial, Tahoma, sans-serif; font-size: 15px; line-height: 23px; color: #2D3A32;">{{en_body}}</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="padding-bottom: 24px;">
+                    <!--[if mso]>
+                    <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{link}}" style="height:48px;v-text-anchor:middle;width:260px;" arcsize="17%" stroke="f" fillcolor="#12797B">
+                    <w:anchorlock/>
+                    <center style="color:#ffffff;font-family:Arial, sans-serif;font-size:15px;font-weight:bold;">{{en_button}}</center>
+                    </v:roundrect>
+                    <![endif]-->
+                    <!--[if !mso]><!-->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                      <tr>
+                        <td align="center" style="border-radius: 8px; background-color: #12797B;">
+                          <a href="{{link}}" target="_blank" class="btn-cell" style="display: inline-block; padding: 14px 32px; font-family: Arial, Tahoma, sans-serif; font-size: 15px; font-weight: bold; color: #FFFFFF; text-decoration: none; border-radius: 8px; line-height: 20px; text-align: center;">{{en_button}}</a>
+                        </td>
+                      </tr>
+                    </table>
+                    <!--<![endif]-->
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom: 16px;">
+                    <div class="copy-box" style="background-color: #F8FAF8; border: 1px solid #E5EBE6; border-radius: 6px; padding: 12px 14px;">
+                      <p class="text-muted" style="margin: 0 0 6px 0; font-family: Arial, Tahoma, sans-serif; font-size: 12px; line-height: 17px; color: #65756C;">Button not working? Copy this link into your browser:</p>
+                      <p style="margin: 0; font-family: 'Courier New', Courier, monospace, Arial; font-size: 12px; line-height: 18px; word-break: break-all; color: #12797B;">
+                        <a href="{{link}}" class="link-text" style="color: #12797B; text-decoration: underline;">{{link}}</a>
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom: 28px;">{{en_note}}</td>
+                </tr>
+              </table>
+
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td class="divider" style="border-top: 1px solid #E3E8E4; padding-top: 28px; line-height: 1px; font-size: 1px;">&nbsp;</td>
+                </tr>
+              </table>
+
+              <!-- Arabic (RTL) -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl" style="direction: rtl; text-align: right;">
+                <tr>
+                  <td style="padding-bottom: 12px;">
+                    <h1 class="text-title" lang="ar" style="margin: 0; font-family: Tahoma, Arial, sans-serif; font-size: 21px; line-height: 32px; font-weight: bold; color: #17202E;">{{ar_heading}}</h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom: 24px;">
+                    <p class="text-body" lang="ar" style="margin: 0; font-family: Tahoma, Arial, sans-serif; font-size: 15px; line-height: 25px; color: #2D3A32;">{{ar_body}}</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="padding-bottom: 24px;">
+                    <!--[if mso]>
+                    <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{link}}" style="height:48px;v-text-anchor:middle;width:260px;" arcsize="17%" stroke="f" fillcolor="#12797B">
+                    <w:anchorlock/>
+                    <center style="color:#ffffff;font-family:Tahoma, Arial, sans-serif;font-size:15px;font-weight:bold;">{{ar_button}}</center>
+                    </v:roundrect>
+                    <![endif]-->
+                    <!--[if !mso]><!-->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                      <tr>
+                        <td align="center" style="border-radius: 8px; background-color: #12797B;">
+                          <a href="{{link}}" target="_blank" class="btn-cell" lang="ar" style="display: inline-block; padding: 14px 36px; font-family: Tahoma, Arial, sans-serif; font-size: 15px; font-weight: bold; color: #FFFFFF; text-decoration: none; border-radius: 8px; line-height: 20px; text-align: center;">{{ar_button}}</a>
+                        </td>
+                      </tr>
+                    </table>
+                    <!--<![endif]-->
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom: 16px;">
+                    <div class="copy-box" style="background-color: #F8FAF8; border: 1px solid #E5EBE6; border-radius: 6px; padding: 12px 14px;">
+                      <p class="text-muted" lang="ar" style="margin: 0 0 6px 0; font-family: Tahoma, Arial, sans-serif; font-size: 12px; line-height: 18px; color: #65756C;">الزر لا يعمل؟ انسخ هذا الرابط والصقه في متصفحك:</p>
+                      <p dir="ltr" style="margin: 0; font-family: 'Courier New', Courier, monospace, Arial; font-size: 12px; line-height: 18px; word-break: break-all; color: #12797B; direction: ltr; text-align: left;">
+                        <a href="{{link}}" class="link-text" style="color: #12797B; text-decoration: underline;">{{link}}</a>
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom: 8px;">{{ar_note}}</td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 16px 8px 16px; text-align: center;">
+              <p class="footer-text" style="margin: 0 0 6px 0; font-family: Arial, Tahoma, sans-serif; font-size: 12px; line-height: 18px; color: #76847C;">Rfoof &middot; Used books from readers in Fayoum</p>
+              <p class="footer-text" style="margin: 0 0 12px 0; font-family: Arial, Tahoma, sans-serif; font-size: 12px; line-height: 18px; color: #76847C;">Rfoof never asks for your password by email.</p>
+              <p class="footer-text" dir="rtl" lang="ar" style="margin: 0 0 6px 0; font-family: Tahoma, Arial, sans-serif; font-size: 12px; line-height: 19px; color: #76847C;">رفوف &middot; كتب مستعملة من قرّاء الفيوم</p>
+              <p class="footer-text" dir="rtl" lang="ar" style="margin: 0; font-family: Tahoma, Arial, sans-serif; font-size: 12px; line-height: 19px; color: #76847C;">لن تطلب رفوف كلمة مرورك عبر البريد أبداً.</p>
+            </td>
+          </tr>
+        </table>
+        <!--[if (gte mso 9)|(IE)]>
+        </td></tr></table>
+        <![endif]-->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
