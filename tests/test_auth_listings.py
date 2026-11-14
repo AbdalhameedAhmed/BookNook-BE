@@ -1,13 +1,15 @@
 from fastapi.testclient import TestClient
 
 from app import main
+from core.config import MAX_BOOK_IMAGE_SIZE_BYTES
+from crud import crud_item
 from main import app
 
 client = TestClient(app)
 
 
 def test_book_photo_larger_than_two_mb_is_rejected() -> None:
-    content = b"\x89PNG\r\n\x1a\n" + b"0" * main.MAX_BOOK_IMAGE_SIZE_BYTES
+    content = b"\x89PNG\r\n\x1a\n" + b"0" * MAX_BOOK_IMAGE_SIZE_BYTES
 
     response = client.post(
         "/api/v1/listing-images",
@@ -114,15 +116,18 @@ def test_exchange_and_free_listings_do_not_require_sale_price() -> None:
         assert response.status_code == 201
 
 
-def test_owner_can_mark_sale_listing_sold(monkeypatch) -> None:
-    monkeypatch.setattr(main, "LISTINGS", [dict(item) for item in main.LISTINGS])
-    response = client.post(
-        "/api/v1/listings/listing-1/mark-complete",
-        headers={"Authorization": "Bearer demo-user-1"},
-    )
+def test_owner_can_mark_sale_listing_sold() -> None:
+    original_listings = [dict(item) for item in crud_item.LISTINGS]
+    try:
+        response = client.post(
+            "/api/v1/listings/listing-1/mark-complete",
+            headers={"Authorization": "Bearer demo-user-1"},
+        )
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "sold"
+        assert response.status_code == 200
+        assert response.json()["status"] == "sold"
+    finally:
+        crud_item.LISTINGS[:] = original_listings
 
 
 def test_non_owner_cannot_mark_listing_complete() -> None:

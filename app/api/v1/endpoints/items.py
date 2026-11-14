@@ -7,6 +7,7 @@ from api.deps import (
     _require_auth,
     get_authenticated_user,
     get_current_user_id,
+    is_moderator,
 )
 from core.config import (
     DEMO_USERS,
@@ -377,9 +378,7 @@ def get_reports(authorization: str | None = Header(default=None)) -> dict[str, o
     user_id = str(current_user["id"])
     supabase = get_supabase_service()
     if supabase is not None:
-        app_metadata = current_user.get("app_metadata") or {}
-        is_moderator = isinstance(app_metadata, dict) and app_metadata.get("role") == "moderator"
-        return {"items": supabase.my_reports(user_id, is_moderator)}
+        return {"items": supabase.my_reports(user_id, is_moderator(current_user))}
 
     if user_id != "demo-user-1":
         user_reports = [
@@ -402,9 +401,7 @@ def update_report(
     user_id = str(current_user["id"])
     supabase = get_supabase_service()
     if supabase is not None:
-        app_metadata = current_user.get("app_metadata") or {}
-        is_moderator = isinstance(app_metadata, dict) and app_metadata.get("role") == "moderator"
-        if not is_moderator:
+        if not is_moderator(current_user):
             raise HTTPException(status_code=403, detail="Only moderators can resolve reports")
         if status not in {"open", "reviewing", "resolved", "dismissed"}:
             raise HTTPException(status_code=400, detail="Unsupported report status")

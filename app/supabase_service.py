@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 import base64
 import json
-from uuid import uuid4
+from datetime import datetime
+from uuid import UUID, uuid4
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -22,23 +23,52 @@ class SupabaseService:
         self.api_key = api_key
         self.is_legacy_jwt_key = len(api_key.split(".")) == 3
 
-    def verify_access_token(self, token: str) -> dict[str, Any]:
-        try:
-            response = httpx.get(
-                f"{self.url}/auth/v1/user",
-                headers={"apikey": self.api_key, "Authorization": f"Bearer {token}"},
-                timeout=10,
-            )
-        except httpx.HTTPError as error:
-            raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
+    # --- Authentication (users table owned by the backend; see migration 006) ---
 
-        if response.status_code != 200:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+    _USER_COLUMNS = "id,email,password_hash,role,email_confirmed_at,password_changed_at"
 
-        user = response.json()
-        if not isinstance(user, dict) or not user.get("id"):
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-        return user
+    def find_user_by_email(self, email: str) -> dict[str, Any] | None:
+        rows = self.rest(
+            "GET", "users", params={"select": self._USER_COLUMNS, "email": f"eq.{email}", "limit": "1"}
+        ).json()
+        return rows[0] if rows else None
+
+    def get_user(self, user_id: str) -> dict[str, Any] | None:
+        if not _is_uuid(user_id):
+            return None
+        rows = self.rest(
+            "GET", "users", params={"select": self._USER_COLUMNS, "id": f"eq.{user_id}", "limit": "1"}
+        ).json()
+        return rows[0] if rows else None
+
+    def get_display_name(self, user_id: str) -> str | None:
+        rows = self.rest(
+            "GET", "profiles", params={"select": "display_name", "id": f"eq.{user_id}", "limit": "1"}
+        ).json()
+        return rows[0]["display_name"] if rows else None
+
+    def register_user(self, email: str, password_hash: str, display_name: str) -> dict[str, Any] | None:
+        return self.rpc(
+            "register_user",
+            {"p_email": email, "p_password_hash": password_hash, "p_display_name": display_name},
+        )
+
+    def issue_auth_token(self, user_id: str, purpose: str, token_hash: str, expires_at: datetime) -> None:
+        self.rpc(
+            "issue_auth_token",
+            {
+                "p_user_id": user_id,
+                "p_purpose": purpose,
+                "p_token_hash": token_hash,
+                "p_expires_at": expires_at.isoformat(),
+            },
+        )
+
+    def confirm_user_email(self, token_hash: str) -> str | None:
+        return self.rpc("confirm_user_email", {"p_token_hash": token_hash})
+
+    def reset_user_password(self, token_hash: str, password_hash: str) -> str | None:
+        return self.rpc("reset_user_password", {"p_token_hash": token_hash, "p_password_hash": password_hash})
 
     def upload_listing_image(self, seller_id: str, content: bytes, content_type: str) -> str:
         extension = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[content_type]
@@ -126,6 +156,9 @@ class SupabaseService:
 
     def rpc(self, function: str, payload: dict[str, Any]) -> Any:
         response = self.rest("POST", f"rpc/{function}", payload=payload)
+        # VOID functions return 204 No Content with an empty body.
+        if response.status_code == 204 or not response.content:
+            return None
         return response.json()
 
     def list_listings(
@@ -355,7 +388,6 @@ def get_supabase_service() -> SupabaseService | None:
 
     url = os.getenv("SUPABASE_URL", "").strip()
     api_key = os.getenv("SUPABASE_SECRET_KEY", "").strip()
-    print(url,api_key)
     if not all((url, api_key)):
         raise RuntimeError("Supabase storage requires SUPABASE_URL and SUPABASE_SECRET_KEY")
     if not _is_privileged_supabase_key(api_key):
@@ -364,6 +396,14 @@ def get_supabase_service() -> SupabaseService | None:
             "publishable/anon keys cannot be used for backend database writes"
         )
     return SupabaseService(url, api_key)
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _is_privileged_supabase_key(api_key: str) -> bool:
