@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from crud.crud_wallet import MEMORY_WALLET_STORE
 from main import app
 
 client = TestClient(app)
@@ -36,6 +37,7 @@ def test_transaction_can_be_completed_by_parties() -> None:
         headers={"Authorization": "Bearer demo-user-1"},
     )
     listing_id = create_response.json()["id"]
+    MEMORY_WALLET_STORE.adjust("demo-user-2", 190, "topup")
 
     request_response = client.post(
         f"/api/v1/listings/{listing_id}/requests",

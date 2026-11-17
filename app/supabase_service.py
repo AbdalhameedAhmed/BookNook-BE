@@ -149,6 +149,15 @@ class SupabaseService:
                 "unsupported_request_status": (400, "Unsupported request status update"),
                 "topup_not_found": (404, "Top-up not found"),
                 "topup_not_pending": (409, "Only pending top-ups can be reviewed"),
+                "insufficient_funds": (402, "Insufficient wallet balance"),
+                "offer_required": (400, "Choose at least one of your books to offer"),
+                "offer_invalid": (400, "Offered books must be your own available listings"),
+                "choose_offer": (400, "Choose one of the offered books"),
+                "offer_unavailable": (409, "The chosen book is no longer available"),
+                "buyer_only_confirm": (403, "Only the buyer can confirm receiving the book"),
+                "already_confirmed": (409, "You already confirmed this handover"),
+                "listing_in_handover": (409, "This book is in an open handover. Finish or cancel the handover first."),
+                "unsupported_listing_status": (400, "Unsupported listing status"),
             }
             if message in domain_errors:
                 code, detail = domain_errors[message]
@@ -238,16 +247,6 @@ class SupabaseService:
             raise HTTPException(status_code=404, detail="Listing not found")
         return self._listing_view(rows[0])
 
-    def deactivate_listing(self, listing_id: str, seller_id: str) -> None:
-        self._get_owned_listing(listing_id, seller_id)
-        self.rest(
-            "PATCH",
-            "listings",
-            params={"id": f"eq.{listing_id}", "seller_id": f"eq.{seller_id}"},
-            payload={"status": "inactive"},
-            prefer="return=minimal",
-        )
-
     def my_listings(self, seller_id: str) -> list[dict[str, Any]]:
         response = self.rest(
             "GET",
@@ -255,60 +254,6 @@ class SupabaseService:
             params={"select": "*,profiles(display_name)", "seller_id": f"eq.{seller_id}", "order": "created_at.desc"},
         )
         return [self._listing_view(row) for row in response.json()]
-
-    def create_request(self, listing_id: str, buyer_id: str, message: str | None) -> dict[str, Any]:
-        result = self.rpc(
-            "create_transaction_request",
-            {"p_listing_id": listing_id, "p_buyer_id": buyer_id, "p_message": message or ""},
-        )
-        return result
-
-    def update_request(self, request_id: str, actor_id: str, next_status: str) -> dict[str, Any]:
-        return self.rpc(
-            "update_transaction_request",
-            {"p_request_id": request_id, "p_actor_id": actor_id, "p_next_status": next_status},
-        )
-
-    def my_requests(self, user_id: str) -> list[dict[str, Any]]:
-        buyer_response = self.rest(
-            "GET",
-            "transaction_requests",
-            params={
-                "select": "*,listings(id,title,seller_id)",
-                "buyer_id": f"eq.{user_id}",
-                "order": "created_at.desc",
-            },
-        )
-        seller_response = self.rest(
-            "GET",
-            "transaction_requests",
-            params={
-                "select": "*,listings!inner(id,title,seller_id)",
-                "listings.seller_id": f"eq.{user_id}",
-                "order": "created_at.desc",
-            },
-        )
-        by_id = {row["id"]: row for row in buyer_response.json()}
-        by_id.update({row["id"]: row for row in seller_response.json()})
-        return [self._request_view(row) for row in by_id.values()]
-
-    def my_transactions(self, user_id: str) -> list[dict[str, Any]]:
-        response = self.rest(
-            "GET",
-            "transactions",
-            params={
-                "select": "*,listings(title)",
-                "or": f"(buyer_id.eq.{user_id},seller_id.eq.{user_id})",
-                "order": "created_at.desc",
-            },
-        )
-        return [self._transaction_view(row) for row in response.json()]
-
-    def complete_transaction(self, transaction_id: str, actor_id: str) -> dict[str, Any]:
-        return self.rpc(
-            "complete_book_transaction",
-            {"p_transaction_id": transaction_id, "p_actor_id": actor_id},
-        )
 
     def create_report(self, payload: dict[str, Any], reporter_id: str) -> dict[str, Any]:
         response = self.rest(
@@ -365,18 +310,6 @@ class SupabaseService:
         row["images"] = row.get("images") or []
         return row
 
-    @staticmethod
-    def _request_view(row: dict[str, Any]) -> dict[str, Any]:
-        listing = row.pop("listings", None) or {}
-        row["seller_id"] = listing.get("seller_id")
-        row["listing_title"] = listing.get("title")
-        return row
-
-    @staticmethod
-    def _transaction_view(row: dict[str, Any]) -> dict[str, Any]:
-        listing = row.pop("listings", None) or {}
-        row["listing_title"] = listing.get("title")
-        return row
 
 
 @lru_cache(maxsize=1)

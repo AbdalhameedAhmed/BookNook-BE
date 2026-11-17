@@ -28,6 +28,7 @@ RECEIPT_BUCKET = "wallet-receipts"
 RECEIPT_URL_TTL_SECONDS = 10 * 60
 DEFAULT_EWALLET_NUMBER = "01109261212"
 _EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+INSUFFICIENT_FUNDS = "Insufficient wallet balance"
 
 
 def ewallet_recipient_number() -> str:
@@ -48,6 +49,9 @@ class SupabaseWalletStore:
             "GET", "wallets", params={"select": "balance_egp", "user_id": f"eq.{user_id}", "limit": "1"}
         ).json()
         return int(rows[0]["balance_egp"]) if rows else 0
+
+    def summary(self, user_id: str) -> dict[str, Any]:
+        return self.service.rpc("wallet_summary", {"p_user_id": user_id})
 
     def count_pending(self, user_id: str) -> int:
         rows = self.service.rest(
@@ -132,9 +136,42 @@ class MemoryWalletStore:
         self.balances: dict[str, int] = {}
         self.topups: dict[str, dict[str, Any]] = {}
         self.receipts: dict[str, tuple[bytes, str]] = {}
+        # Ledger: user_id None rows are platform fee revenue (mirrors public.wallet_entries).
+        self.entries: list[dict[str, Any]] = []
 
     def get_balance(self, user_id: str) -> int:
         return self.balances.get(user_id, 0)
+
+    def adjust(self, user_id: str, delta: int, kind: str, *, request_id: str | None = None,
+               transaction_id: str | None = None, topup_id: str | None = None) -> None:
+        """Changes a balance and records it; refuses to go negative (callers check before mutating)."""
+        if delta == 0:
+            return
+        balance = self.balances.get(user_id, 0) + delta
+        if balance < 0:
+            raise HTTPException(status_code=402, detail=INSUFFICIENT_FUNDS)
+        self.balances[user_id] = balance
+        self._entry(user_id, delta, kind, request_id, transaction_id, topup_id)
+
+    def record_fee(self, amount: int, transaction_id: str) -> None:
+        if amount > 0:
+            self._entry(None, amount, "fee", None, transaction_id, None)
+
+    def summary(self, user_id: str) -> dict[str, Any]:
+        held = sum(int(r.get("held_egp") or 0) for r in REQUESTS if r["buyer_id"] == user_id and r["status"] == "pending")
+        for t in TRANSACTIONS:
+            if t["status"] == "arranging":
+                held += int(t.get("buyer_held_egp") or 0) if t["buyer_id"] == user_id else 0
+                held += int(t.get("seller_held_egp") or 0) if t["seller_id"] == user_id else 0
+        entries = [e for e in reversed(self.entries) if e["user_id"] == user_id][:50]
+        return {"balance_egp": self.get_balance(user_id), "held_egp": held, "entries": entries}
+
+    def _entry(self, user_id: str | None, amount: int, kind: str, request_id: str | None,
+               transaction_id: str | None, topup_id: str | None) -> None:
+        self.entries.append({
+            "id": str(uuid4()), "user_id": user_id, "amount_egp": amount, "kind": kind, "request_id": request_id,
+            "transaction_id": transaction_id, "topup_id": topup_id, "created_at": _now(),
+        })
 
     def count_pending(self, user_id: str) -> int:
         return sum(1 for t in self.topups.values() if t["user_id"] == user_id and t["status"] == "pending")
@@ -174,7 +211,7 @@ class MemoryWalletStore:
     def approve_topup(self, topup_id: str, reviewer_id: str) -> dict[str, Any]:
         with self._lock:
             topup = self._pending(topup_id)
-            self.balances[topup["user_id"]] = self.balances.get(topup["user_id"], 0) + topup["amount_egp"]
+            self.adjust(topup["user_id"], topup["amount_egp"], "topup", topup_id=topup_id)
             return self._review(topup, "approved", reviewer_id, None)
 
     def reject_topup(self, topup_id: str, reviewer_id: str, note: str | None) -> dict[str, Any]:
@@ -194,6 +231,10 @@ class MemoryWalletStore:
             "topups_pending": len(pending),
             "topups_pending_egp": sum(t["amount_egp"] for t in pending),
             "wallet_balance_total_egp": sum(self.balances.values()),
+            "held_total_egp": sum(int(r.get("held_egp") or 0) for r in REQUESTS if r["status"] == "pending")
+            + sum(int(t.get("buyer_held_egp") or 0) + int(t.get("seller_held_egp") or 0)
+                  for t in TRANSACTIONS if t["status"] == "arranging"),
+            "platform_revenue_egp": sum(e["amount_egp"] for e in self.entries if e["kind"] == "fee"),
         }
 
     def _pending(self, topup_id: str) -> dict[str, Any]:

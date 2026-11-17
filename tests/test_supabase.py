@@ -185,6 +185,8 @@ def test_supabase_mode_persists_request_through_transactional_rpc(monkeypatch: p
     assert captured["method"] == "POST"
     assert captured["url"].endswith("/rpc/create_transaction_request")
     assert captured["json"]["p_buyer_id"] == "b797b8b4-09c5-4f7f-90d4-e89a595c6c4b"
+    assert captured["json"]["p_fee"] == 10
+    assert captured["json"]["p_offered_listing_ids"] == []
     assert response.json()["status"] == "pending"
 
 
@@ -194,10 +196,10 @@ def test_supabase_request_history_is_loaded_for_participant(monkeypatch: pytest.
     monkeypatch.setenv("SUPABASE_URL", "https://project.example")
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test-key")
     auth_headers = sign_in_as(monkeypatch, user_id)
-    captured_params: list[dict[str, str]] = []
+    calls: list[tuple[str, object]] = []
 
     def fake_request(method: str, url: str, **kwargs: object) -> httpx.Response:
-        captured_params.append(kwargs["params"])
+        calls.append((url, kwargs.get("json")))
         return httpx.Response(200, json=[])
 
     monkeypatch.setattr(httpx, "request", fake_request)
@@ -208,9 +210,8 @@ def test_supabase_request_history_is_loaded_for_participant(monkeypatch: pytest.
 
     assert response.status_code == 200
     assert response.json() == {"items": []}
-    assert len(captured_params) == 2
-    assert captured_params[0]["buyer_id"] == f"eq.{user_id}"
-    assert captured_params[1]["listings.seller_id"] == f"eq.{user_id}"
+    # One read-model RPC scoped to the signed-in user (buyer or seller side).
+    assert calls == [("https://project.example/rest/v1/rpc/my_requests", {"p_user_id": user_id})]
 
 
 def test_supabase_transaction_completion_uses_atomic_rpc(monkeypatch: pytest.MonkeyPatch) -> None:

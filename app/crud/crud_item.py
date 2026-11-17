@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 from fastapi import HTTPException
 
 from schemas.items import Listing
@@ -72,11 +74,21 @@ LISTINGS: list[dict[str, object]] = [
     },
 ]
 
+_SEED_LISTINGS = deepcopy(LISTINGS)
+
 REQUESTS: list[dict[str, object]] = []
 
 TRANSACTIONS: list[dict[str, object]] = []
 
 REPORTS: list[dict[str, object]] = []
+
+
+def reset_memory_data() -> None:
+    """Restores the demo seed data in place (tests/demo only)."""
+    LISTINGS[:] = deepcopy(_SEED_LISTINGS)
+    REQUESTS.clear()
+    TRANSACTIONS.clear()
+    REPORTS.clear()
 
 def _normalize_listing(item: dict[str, object]) -> Listing:
     return Listing.model_validate(item)

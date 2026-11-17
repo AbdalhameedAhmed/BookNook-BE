@@ -14,16 +14,14 @@ from core.config import (
     IMAGE_SIGNATURES,
     MAX_BOOK_IMAGE_SIZE_BYTES,
     VALID_CONDITIONS,
+    platform_fee_egp,
 )
 from core.supabase import get_supabase_service
+from crud.crud_deals import FINAL_LISTING_STATUS, get_deal_store
 from crud.crud_item import (
     LISTINGS,
     REPORTS,
-    REQUESTS,
-    TRANSACTIONS,
     _get_listing_or_404,
-    _get_request_or_404,
-    _get_transaction_or_404,
     _normalize_listing,
 )
 from schemas.items import ListingCreate, ListingUpdate, ReportCreate, RequestCreate, RequestUpdate
@@ -44,7 +42,6 @@ def get_listings(
         raise HTTPException(status_code=400, detail="page_size must be at least 1")
 
     supabase = get_supabase_service()
-    print("supabase 😂😂😂", supabase)
 
     if supabase is not None:
         items, total = supabase.list_listings(
@@ -174,7 +171,8 @@ def update_listing(
     if item["seller_id"] != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only edit your own listings")
 
-    update_data = payload.model_dump(exclude_unset=True)
+    # Status only changes through deactivate / mark-complete / handovers, which keep held money consistent.
+    update_data = payload.model_dump(exclude_unset=True, exclude={"status"})
     if not update_data:
         return item
 
@@ -189,54 +187,24 @@ def update_listing(
         raise HTTPException(status_code=400, detail="price_egp must be non-negative when provided")
 
     item.update(update_data)
-    item["status"] = update_data.get("status", item["status"])
     return item
 
 @router.post("/listings/{listing_id}/deactivate")
 def deactivate_listing(listing_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
     user_id = _require_auth(authorization)
-    supabase = get_supabase_service()
-    if supabase is not None:
-        supabase.deactivate_listing(listing_id, user_id)
-        return {"status": "inactive", "listing_id": listing_id}
-
-    item = _get_listing_or_404(listing_id)
-
-    if item["seller_id"] != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only deactivate your own listings")
-
-    item["status"] = "inactive"
+    _get_owned_listing(listing_id, user_id, "You can only deactivate your own listings")
+    get_deal_store().close_listing(listing_id, user_id, "inactive")
     return {"status": "inactive", "listing_id": listing_id}
 
 @router.post("/listings/{listing_id}/mark-complete")
 def mark_listing_complete(listing_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    """Owner closes a listing that changed hands outside Rfoof. Pending requests are refunded."""
     user_id = _require_auth(authorization)
-    supabase = get_supabase_service()
-
-    if supabase is not None:
-        listing = supabase.get_listing(listing_id, seller_id=user_id)
-        if listing["status"] not in {"active", "reserved"}:
-            raise HTTPException(status_code=400, detail="Only active or reserved listings can be marked complete")
-        final_status = {
-            "sale": "sold",
-            "exchange": "exchanged",
-            "free": "inactive",
-        }[listing["listing_type"]]
-        supabase.update_listing(listing_id, user_id, {"status": final_status})
-        return {"status": final_status, "listing_id": listing_id}
-
-    listing = _get_listing_or_404(listing_id)
-    if listing["seller_id"] != user_id:
-        raise HTTPException(status_code=403, detail="You can only complete your own listings")
+    listing = _get_owned_listing(listing_id, user_id, "You can only complete your own listings")
     if listing["status"] not in {"active", "reserved"}:
         raise HTTPException(status_code=400, detail="Only active or reserved listings can be marked complete")
-
-    final_status = {
-        "sale": "sold",
-        "exchange": "exchanged",
-        "free": "inactive",
-    }[str(listing["listing_type"])]
-    listing["status"] = final_status
+    final_status = FINAL_LISTING_STATUS[str(listing["listing_type"])]
+    get_deal_store().close_listing(listing_id, user_id, final_status)
     return {"status": final_status, "listing_id": listing_id}
 
 @router.post("/listings/{listing_id}/requests", status_code=status.HTTP_201_CREATED)
@@ -245,41 +213,11 @@ def create_request(
     payload: RequestCreate,
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
+    """Sale: holds price + fee from the buyer's wallet. Exchange: holds the fee and records the offered books."""
     buyer_id = _require_auth(authorization)
-    supabase = get_supabase_service()
-    if supabase is not None:
-        return supabase.create_request(listing_id, buyer_id, payload.message)
-
-    listing = _get_listing_or_404(listing_id)
-
-    if listing["seller_id"] == buyer_id:
-        raise HTTPException(status_code=403, detail="You cannot request your own listing")
-
-    if listing["status"] != "active":
-        raise HTTPException(status_code=400, detail="Inactive or sold listings cannot receive new requests")
-
-    existing = any(
-        request["listing_id"] == listing_id
-        and request["buyer_id"] == buyer_id
-        and request["status"] == "pending"
-        for request in REQUESTS
+    return get_deal_store().create_request(
+        listing_id, buyer_id, payload.message, payload.offered_listing_ids, platform_fee_egp()
     )
-    if existing:
-        raise HTTPException(status_code=409, detail="You already have a pending request for this listing")
-
-    request_id = f"request-{len(REQUESTS) + 1}"
-    request = {
-        "id": request_id,
-        "listing_id": listing_id,
-        "buyer_id": buyer_id,
-        "seller_id": listing["seller_id"],
-        "message": payload.message or "",
-        "status": "pending",
-        "created_at": "2026-10-24T00:00:00Z",
-        "updated_at": "2026-10-24T00:00:00Z",
-    }
-    REQUESTS.insert(0, request)
-    return request
 
 @router.patch("/requests/{request_id}")
 def update_request(
@@ -288,56 +226,13 @@ def update_request(
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
     user_id = _require_auth(authorization)
-    supabase = get_supabase_service()
-    if supabase is not None:
-        return supabase.update_request(request_id, user_id, payload.status)
+    return get_deal_store().update_request(
+        request_id, user_id, payload.status, payload.chosen_listing_id, platform_fee_egp()
+    )
 
-    request = _get_request_or_404(request_id)
-    listing = _get_listing_or_404(request["listing_id"])
-
-    if payload.status == "cancelled":
-        if request["buyer_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Only the buyer can cancel a request")
-        request["status"] = "cancelled"
-        request["updated_at"] = "2026-10-24T00:00:00Z"
-        return request
-
-    if listing["seller_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Only the seller can accept or reject a request")
-
-    if payload.status == "accepted":
-        request["status"] = "accepted"
-        listing["status"] = "reserved"
-        request["updated_at"] = "2026-10-24T00:00:00Z"
-
-        transaction_exists = any(
-            transaction["listing_id"] == listing["id"]
-            and transaction["buyer_id"] == request["buyer_id"]
-            and transaction["seller_id"] == request["seller_id"]
-            for transaction in TRANSACTIONS
-        )
-        if not transaction_exists:
-            TRANSACTIONS.insert(
-                0,
-                {
-                    "id": f"transaction-{len(TRANSACTIONS) + 1}",
-                    "listing_id": listing["id"],
-                    "buyer_id": request["buyer_id"],
-                    "seller_id": request["seller_id"],
-                    "fulfillment_method": listing.get("meetup_preference", "direct_meetup"),
-                    "status": "arranging",
-                    "created_at": "2026-10-24T00:00:00Z",
-                    "updated_at": "2026-10-24T00:00:00Z",
-                },
-            )
-        return request
-
-    if payload.status == "rejected":
-        request["status"] = "rejected"
-        request["updated_at"] = "2026-10-24T00:00:00Z"
-        return request
-
-    raise HTTPException(status_code=400, detail="Unsupported request status update")
+@router.get("/fees")
+def get_fees() -> dict[str, int]:
+    return {"platform_fee_egp": platform_fee_egp()}
 
 @router.post("/reports", status_code=status.HTTP_201_CREATED)
 def create_report(payload: ReportCreate, authorization: str | None = Header(default=None)) -> dict[str, object]:
@@ -423,29 +318,16 @@ def update_report(
 
 @router.post("/transactions/{transaction_id}/complete")
 def complete_transaction(transaction_id: str, authorization: str | None = Header(default=None)) -> dict[str, object]:
+    """Sale: the buyer confirms receipt and the seller is paid. Exchange: completes once both parties confirm."""
     user_id = _require_auth(authorization)
+    return get_deal_store().confirm(transaction_id, user_id)
+
+
+def _get_owned_listing(listing_id: str, user_id: str, forbidden_detail: str) -> dict[str, object]:
     supabase = get_supabase_service()
     if supabase is not None:
-        return supabase.complete_transaction(transaction_id, user_id)
-
-    transaction = _get_transaction_or_404(transaction_id)
-
-    if transaction["buyer_id"] != user_id and transaction["seller_id"] != user_id:
-        raise HTTPException(status_code=403, detail="You are not authorized to complete this transaction")
-
-    if transaction["status"] != "arranging":
-        raise HTTPException(status_code=400, detail="Only arranging transactions can be completed")
-
-    transaction["status"] = "completed"
-    transaction["updated_at"] = "2026-10-24T00:00:00Z"
-    transaction["completed_at"] = "2026-10-24T00:00:00Z"
-
-    listing = _get_listing_or_404(transaction["listing_id"])
-    if listing["listing_type"] == "sale":
-        listing["status"] = "sold"
-    elif listing["listing_type"] == "exchange":
-        listing["status"] = "exchanged"
-    else:
-        listing["status"] = "inactive"
-
-    return transaction
+        return supabase.get_listing(listing_id, seller_id=user_id)
+    listing = _get_listing_or_404(listing_id)
+    if listing["seller_id"] != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=forbidden_detail)
+    return listing

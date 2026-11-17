@@ -54,4 +54,7 @@ auth_by_ip = RateLimiter(max_hits=60, window_seconds=15 * 60)
 # Per user: wallet top-up submissions (each one uploads a receipt and needs manual review).
 topup_by_user = RateLimiter(max_hits=10, window_seconds=60 * 60)
 
-ALL_LIMITERS = (login_by_email, email_send_by_email, auth_by_ip, topup_by_user)
+# Per user: chat messages.
+message_by_user = RateLimiter(max_hits=30, window_seconds=60)
+
+ALL_LIMITERS = (login_by_email, email_send_by_email, auth_by_ip, topup_by_user, message_by_user)

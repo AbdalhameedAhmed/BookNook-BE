@@ -15,6 +15,7 @@ from core.config import (
     MAX_TOPUP_EGP,
     MIN_TOPUP_EGP,
     TOPUP_METHODS,
+    platform_fee_egp,
 )
 from core.rate_limit import topup_by_user
 from crud.crud_wallet import charging_options, ewallet_recipient_number, get_wallet_store
@@ -32,9 +33,14 @@ OWNER_FIELDS = ("id", "method", "sender_number", "recipient_number", "amount_egp
 @router.get("")
 def get_wallet(user_id: CurrentUserId) -> dict[str, object]:
     store = get_wallet_store()
+    summary = store.summary(user_id)
     return {
-        "balance_egp": store.get_balance(user_id),
+        "balance_egp": summary["balance_egp"],
+        # Money taken from the balance for open requests and handovers; refunded or paid out later.
+        "held_egp": summary["held_egp"],
+        "entries": summary["entries"],
         "options": charging_options(),
+        "platform_fee_egp": platform_fee_egp(),
         "topups": [_owner_view(row) for row in store.list_topups(user_id=user_id)],
     }
 

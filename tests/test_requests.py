@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from crud.crud_wallet import MEMORY_WALLET_STORE
 from main import app
 
 client = TestClient(app)
@@ -32,9 +33,11 @@ def test_inactive_or_sold_listings_cannot_receive_requests() -> None:
 
 
 def test_seller_can_accept_request_and_create_transaction() -> None:
+    MEMORY_WALLET_STORE.adjust("demo-user-1", 10, "topup")
+    MEMORY_WALLET_STORE.adjust("demo-user-2", 10, "topup")
     response = client.post(
         "/api/v1/listings/listing-2/requests",
-        json={"message": "I want to exchange."},
+        json={"message": "I want to exchange.", "offered_listing_ids": ["listing-3"]},
         headers={"Authorization": "Bearer demo-user-1"},
     )
 
@@ -43,7 +46,7 @@ def test_seller_can_accept_request_and_create_transaction() -> None:
 
     accept_response = client.patch(
         f"/api/v1/requests/{request_id}",
-        json={"status": "accepted"},
+        json={"status": "accepted", "chosen_listing_id": "listing-3"},
         headers={"Authorization": "Bearer demo-user-2"},
     )
 

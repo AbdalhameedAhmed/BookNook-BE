@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.deps import get_authenticated_user, is_moderator
+from crud.crud_deals import get_deal_store
 from crud.crud_wallet import get_wallet_store
 from schemas.wallet import TopupReject
 
@@ -57,6 +58,17 @@ def reject_topup(
 ) -> dict[str, object]:
     note = (payload.note or "").strip() if payload else ""
     return _public(get_wallet_store().reject_topup(str(topup_id), str(moderator["id"]), note or None))
+
+
+@router.get("/transactions")
+def list_transactions(status: Literal["arranging", "completed", "cancelled"] = "arranging") -> dict[str, object]:
+    return {"items": get_deal_store().transactions(None, status)}
+
+
+@router.post("/transactions/{transaction_id}/cancel")
+def cancel_transaction(transaction_id: str) -> dict[str, object]:
+    """For handovers that fall through after acceptance: refunds everything held to both parties."""
+    return get_deal_store().cancel(transaction_id)
 
 
 def _public(row: dict[str, object]) -> dict[str, object]:
