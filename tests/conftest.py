@@ -4,6 +4,7 @@ import app.main  # noqa: F401  (puts app/ on sys.path so top-level module names 
 from core import rate_limit
 from core.auth_settings import get_auth_settings
 from crud.crud_user import MEMORY_AUTH_STORE
+from crud.crud_wallet import MEMORY_WALLET_STORE
 from supabase_service import get_supabase_service
 
 
@@ -15,5 +16,6 @@ def use_memory_storage_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     get_supabase_service.cache_clear()
     get_auth_settings.cache_clear()
     MEMORY_AUTH_STORE.reset()
+    MEMORY_WALLET_STORE.reset()
     for limiter in rate_limit.ALL_LIMITERS:
         limiter.reset()

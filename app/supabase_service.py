@@ -147,6 +147,8 @@ class SupabaseService:
                 "duplicate_pending_request": (409, "You already have a pending request for this listing"),
                 "transaction_not_arranging": (409, "Only arranging transactions can be completed"),
                 "unsupported_request_status": (400, "Unsupported request status update"),
+                "topup_not_found": (404, "Top-up not found"),
+                "topup_not_pending": (409, "Only pending top-ups can be reviewed"),
             }
             if message in domain_errors:
                 code, detail = domain_errors[message]

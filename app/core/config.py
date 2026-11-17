@@ -13,3 +13,12 @@ IMAGE_SIGNATURES = {
         and content[8:12] == b"WEBP"
     ),
 }
+
+# --- Wallet top-ups ---
+# Receipts are phone screenshots, which are often larger than book photos.
+MAX_RECEIPT_SIZE_BYTES = 5 * 1024 * 1024
+MIN_TOPUP_EGP = 1
+MAX_TOPUP_EGP = 50_000
+# Abuse guard: a user cannot pile up unreviewed top-ups.
+MAX_PENDING_TOPUPS_PER_USER = 5
+TOPUP_METHODS = {"e_wallet"}
