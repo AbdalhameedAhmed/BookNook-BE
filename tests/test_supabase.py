@@ -187,6 +187,7 @@ def test_supabase_mode_persists_request_through_transactional_rpc(monkeypatch: p
     assert captured["json"]["p_buyer_id"] == "b797b8b4-09c5-4f7f-90d4-e89a595c6c4b"
     assert captured["json"]["p_fee"] == 10
     assert captured["json"]["p_offered_listing_ids"] == []
+    assert captured["json"]["p_promo_code"] is None
     assert response.json()["status"] == "pending"
 
 

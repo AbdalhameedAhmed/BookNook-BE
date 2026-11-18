@@ -17,7 +17,9 @@ from core.config import (
     platform_fee_egp,
 )
 from core.supabase import get_supabase_service
+from core.rate_limit import promo_check_by_user
 from crud.crud_deals import FINAL_LISTING_STATUS, get_deal_store
+from crud.crud_promos import PROMO_INVALID, get_promo_store
 from crud.crud_item import (
     LISTINGS,
     REPORTS,
@@ -216,7 +218,7 @@ def create_request(
     """Sale: holds price + fee from the buyer's wallet. Exchange: holds the fee and records the offered books."""
     buyer_id = _require_auth(authorization)
     return get_deal_store().create_request(
-        listing_id, buyer_id, payload.message, payload.offered_listing_ids, platform_fee_egp()
+        listing_id, buyer_id, payload.message, payload.offered_listing_ids, platform_fee_egp(), _promo(payload.promo_code)
     )
 
 @router.patch("/requests/{request_id}")
@@ -227,12 +229,25 @@ def update_request(
 ) -> dict[str, object]:
     user_id = _require_auth(authorization)
     return get_deal_store().update_request(
-        request_id, user_id, payload.status, payload.chosen_listing_id, platform_fee_egp()
+        request_id, user_id, payload.status, payload.chosen_listing_id, platform_fee_egp(), _promo(payload.promo_code)
     )
 
 @router.get("/fees")
 def get_fees() -> dict[str, int]:
     return {"platform_fee_egp": platform_fee_egp()}
+
+@router.get("/promo-codes/{code}")
+def check_promo_code(code: str, authorization: str | None = Header(default=None)) -> dict[str, object]:
+    """Preview a code's discount before sending/accepting a request. Does not use it up."""
+    user_id = _require_auth(authorization)
+    promo_check_by_user.hit(user_id)
+    if _promo(code) is None or len(code) > 32:
+        raise HTTPException(status_code=400, detail=PROMO_INVALID)
+    return get_promo_store().check(code)
+
+
+def _promo(code: str | None) -> str | None:
+    return code.strip() or None if code else None
 
 @router.post("/reports", status_code=status.HTTP_201_CREATED)
 def create_report(payload: ReportCreate, authorization: str | None = Header(default=None)) -> dict[str, object]:

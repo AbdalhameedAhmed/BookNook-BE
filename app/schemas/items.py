@@ -48,11 +48,15 @@ class RequestCreate(BaseModel):
     message: str | None = Field(default=None, max_length=1000)
     # Exchange requests only: the requester's own active listings offered in return.
     offered_listing_ids: list[str] = Field(default_factory=list, max_length=10)
+    # Optional promo code lowering the requester's own fee.
+    promo_code: str | None = Field(default=None, max_length=32)
 
 class RequestUpdate(BaseModel):
     status: Literal["accepted", "rejected", "cancelled"]
     # Exchange acceptance only: which offered book the owner takes.
     chosen_listing_id: str | None = None
+    # Acceptance only: optional promo code lowering the seller/owner's own fee.
+    promo_code: str | None = Field(default=None, max_length=32)
 
 class ReportCreate(BaseModel):
     listing_id: str | None = None

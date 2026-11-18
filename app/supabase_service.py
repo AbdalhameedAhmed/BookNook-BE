@@ -158,6 +158,10 @@ class SupabaseService:
                 "already_confirmed": (409, "You already confirmed this handover"),
                 "listing_in_handover": (409, "This book is in an open handover. Finish or cancel the handover first."),
                 "unsupported_listing_status": (400, "Unsupported listing status"),
+                "promo_invalid": (400, "This promo code isn't valid"),
+                "promo_exhausted": (409, "This promo code has been fully used"),
+                "promo_not_applicable": (400, "Promo codes only apply to sale and exchange fees"),
+                "promo_code_taken": (409, "A promo code with this name already exists"),
             }
             if message in domain_errors:
                 code, detail = domain_errors[message]

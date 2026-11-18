@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from core.supabase import get_supabase_service
 from crud.crud_item import LISTINGS, REQUESTS, TRANSACTIONS, _get_listing_or_404
+from crud.crud_promos import MEMORY_PROMO_STORE
 from crud.crud_user import MEMORY_AUTH_STORE
 from crud.crud_wallet import INSUFFICIENT_FUNDS, MEMORY_WALLET_STORE
 
@@ -28,23 +29,24 @@ class SupabaseDealStore:
         self.service = service
 
     def create_request(self, listing_id: str, buyer_id: str, message: str | None,
-                       offered_listing_ids: list[str], fee: int) -> dict[str, Any]:
+                       offered_listing_ids: list[str], fee: int, promo_code: str | None = None) -> dict[str, Any]:
         _require_uuid(listing_id, "Listing not found")
         for offered in offered_listing_ids:
             _require_uuid(offered, "Offered books must be your own available listings", status=400)
         return self.service.rpc("create_transaction_request", {
             "p_listing_id": listing_id, "p_buyer_id": buyer_id, "p_message": message or "",
-            "p_offered_listing_ids": offered_listing_ids, "p_fee": fee,
+            "p_offered_listing_ids": offered_listing_ids, "p_fee": fee, "p_promo_code": promo_code,
         })
 
     def update_request(self, request_id: str, actor_id: str, next_status: str,
-                       chosen_listing_id: str | None, fee: int) -> dict[str, Any]:
+                       chosen_listing_id: str | None, fee: int, promo_code: str | None = None) -> dict[str, Any]:
         _require_uuid(request_id, "Request not found")
         if chosen_listing_id is not None:
             _require_uuid(chosen_listing_id, "Choose one of the offered books", status=400)
         return self.service.rpc("update_transaction_request", {
             "p_request_id": request_id, "p_actor_id": actor_id, "p_next_status": next_status,
             "p_chosen_listing_id": chosen_listing_id, "p_fee": fee,
+            "p_promo_code": promo_code if next_status == "accepted" else None,
         })
 
     def confirm(self, transaction_id: str, actor_id: str) -> dict[str, Any]:
@@ -108,7 +110,7 @@ class MemoryDealStore:
     # --- Requests ---
 
     def create_request(self, listing_id: str, buyer_id: str, message: str | None,
-                       offered_listing_ids: list[str], fee: int) -> dict[str, Any]:
+                       offered_listing_ids: list[str], fee: int, promo_code: str | None = None) -> dict[str, Any]:
         with self._lock:
             listing = _get_listing_or_404(listing_id)
             if listing["seller_id"] == buyer_id:
@@ -130,6 +132,8 @@ class MemoryDealStore:
             elif kind == "sale":
                 price, request_fee = int(listing["price_egp"] or 0), fee
 
+            promo, discount = (MEMORY_PROMO_STORE.discount_for(promo_code, request_fee) if promo_code else (None, 0))
+            request_fee -= discount
             held = price + request_fee
             if self.wallet.get_balance(buyer_id) < held:
                 raise HTTPException(status_code=402, detail=INSUFFICIENT_FUNDS)
@@ -138,15 +142,18 @@ class MemoryDealStore:
             request = {
                 "id": str(uuid4()), "listing_id": listing_id, "buyer_id": buyer_id, "seller_id": listing["seller_id"],
                 "message": message or "", "status": "pending", "kind": kind, "price_egp": price,
-                "fee_egp": request_fee, "held_egp": held, "offers": offered if kind == "exchange" else [],
+                "fee_egp": request_fee, "fee_discount_egp": discount, "held_egp": held,
+                "offers": offered if kind == "exchange" else [],
                 "created_at": now, "updated_at": now,
             }
             REQUESTS.insert(0, request)
+            if promo:
+                MEMORY_PROMO_STORE.record(promo, buyer_id, request["id"], "buyer", discount)
             self.wallet.adjust(buyer_id, -held, "hold", request_id=request["id"])
             return _public_request(request)
 
     def update_request(self, request_id: str, actor_id: str, next_status: str,
-                       chosen_listing_id: str | None, fee: int) -> dict[str, Any]:
+                       chosen_listing_id: str | None, fee: int, promo_code: str | None = None) -> dict[str, Any]:
         with self._lock:
             request = next((r for r in REQUESTS if r["id"] == request_id), None)
             if request is None:
@@ -181,10 +188,12 @@ class MemoryDealStore:
                 if chosen["status"] != "active" or chosen["seller_id"] != request["buyer_id"]:
                     raise HTTPException(status_code=409, detail="The chosen book is no longer available")
                 seller_fee = fee
-                if self.wallet.get_balance(actor_id) < seller_fee:
-                    raise HTTPException(status_code=402, detail=INSUFFICIENT_FUNDS)
             elif kind == "sale":
                 seller_fee = min(fee, int(request.get("price_egp") or 0))
+            promo, seller_discount = (MEMORY_PROMO_STORE.discount_for(promo_code, seller_fee) if promo_code else (None, 0))
+            seller_fee -= seller_discount
+            if kind == "exchange" and self.wallet.get_balance(actor_id) < seller_fee:
+                raise HTTPException(status_code=402, detail=INSUFFICIENT_FUNDS)
 
             now = _now()
             transaction = {
@@ -196,12 +205,15 @@ class MemoryDealStore:
                 "price_egp": int(request.get("price_egp") or 0), "buyer_fee_egp": int(request.get("fee_egp") or 0),
                 "seller_fee_egp": seller_fee, "buyer_held_egp": int(request.get("held_egp") or 0),
                 "seller_held_egp": seller_fee if kind == "exchange" else 0,
+                "buyer_discount_egp": int(request.get("fee_discount_egp") or 0), "seller_discount_egp": seller_discount,
                 "buyer_confirmed_at": None, "seller_confirmed_at": None,
                 "created_at": now, "updated_at": now, "completed_at": None,
             }
             if kind == "exchange":
                 self.wallet.adjust(actor_id, -seller_fee, "hold", request_id=request["id"], transaction_id=transaction["id"])
             TRANSACTIONS.insert(0, transaction)
+            if promo:
+                MEMORY_PROMO_STORE.record(promo, actor_id, request["id"], "seller", seller_discount)
 
             reserved_ids = {listing["id"]} | ({chosen["id"]} if chosen else set())
             for item in LISTINGS:
@@ -262,6 +274,7 @@ class MemoryDealStore:
             ids = {"request_id": transaction["request_id"], "transaction_id": transaction["id"]}
             self.wallet.adjust(transaction["buyer_id"], transaction.get("buyer_held_egp", 0), "refund", **ids)
             self.wallet.adjust(transaction["seller_id"], transaction.get("seller_held_egp", 0), "refund", **ids)
+            MEMORY_PROMO_STORE.release(transaction["request_id"])
             for item in LISTINGS:
                 if item["id"] in {transaction["listing_id"], transaction.get("offered_listing_id")} and item["status"] == "reserved":
                     item["status"] = "active"
@@ -330,6 +343,7 @@ class MemoryDealStore:
 
     def _close_pending(self, request: dict[str, Any], next_status: str) -> None:
         self.wallet.adjust(request["buyer_id"], int(request.get("held_egp") or 0), "refund", request_id=request["id"])
+        MEMORY_PROMO_STORE.release(request["id"])
         request.update(status=next_status, held_egp=0, updated_at=_now())
 
     @staticmethod
@@ -353,6 +367,7 @@ def _transaction_defaults() -> dict[str, Any]:
     return {
         "kind": "free", "offered_listing_id": None, "price_egp": 0, "buyer_fee_egp": 0, "seller_fee_egp": 0,
         "buyer_held_egp": 0, "seller_held_egp": 0, "buyer_confirmed_at": None, "seller_confirmed_at": None,
+        "buyer_discount_egp": 0, "seller_discount_egp": 0,
     }
 
 

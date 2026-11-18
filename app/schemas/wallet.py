@@ -5,3 +5,14 @@ from pydantic import BaseModel, Field
 
 class TopupReject(BaseModel):
     note: str | None = Field(default=None, max_length=500)
+
+
+class PromoCreate(BaseModel):
+    code: str = Field(..., pattern=r"^\s*[A-Za-z0-9_-]{3,32}\s*$")
+    discount_egp: int = Field(..., ge=1, le=10_000)
+    # Number of book deals the code can be used on, across all users.
+    max_uses: int = Field(..., ge=1, le=1_000_000)
+
+
+class PromoUpdate(BaseModel):
+    active: bool
