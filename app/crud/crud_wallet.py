@@ -163,7 +163,7 @@ class MemoryWalletStore:
             if t["status"] == "arranging":
                 held += int(t.get("buyer_held_egp") or 0) if t["buyer_id"] == user_id else 0
                 held += int(t.get("seller_held_egp") or 0) if t["seller_id"] == user_id else 0
-        entries = [e for e in reversed(self.entries) if e["user_id"] == user_id][:50]
+        entries = [{**e, "listing_title": _entry_title(e)} for e in reversed(self.entries) if e["user_id"] == user_id][:50]
         return {"balance_egp": self.get_balance(user_id), "held_egp": held, "entries": entries}
 
     def _entry(self, user_id: str | None, amount: int, kind: str, request_id: str | None,
@@ -250,6 +250,13 @@ class MemoryWalletStore:
         now = _now()
         topup.update(status=status, review_note=note, reviewed_by=reviewer_id, reviewed_at=now, updated_at=now)
         return dict(topup)
+
+
+def _entry_title(entry: dict[str, Any]) -> str | None:
+    """Title of the book a ledger entry relates to (via its request or transaction)."""
+    listing_id = next((r["listing_id"] for r in REQUESTS if r["id"] == entry.get("request_id")), None) \
+        or next((t["listing_id"] for t in TRANSACTIONS if t["id"] == entry.get("transaction_id")), None)
+    return next((str(item["title"]) for item in LISTINGS if item["id"] == listing_id), None)
 
 
 def _now() -> str:

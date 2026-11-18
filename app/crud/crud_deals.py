@@ -324,6 +324,7 @@ class MemoryDealStore:
                 **_transaction_defaults(), **transaction, "listing_title": listing.get("title"),
                 "offered_listing_title": offered.get("title"),
                 "buyer_name": _display_name(transaction["buyer_id"]), "seller_name": _display_name(transaction["seller_id"]),
+                **self._last_message(transaction["id"]),
             })
         return rows
 
@@ -340,6 +341,10 @@ class MemoryDealStore:
         return dict(message)
 
     # --- Helpers ---
+
+    def _last_message(self, transaction_id: str) -> dict[str, Any]:
+        last = next((m for m in reversed(self.messages) if m["transaction_id"] == transaction_id), None)
+        return {"last_message_at": last["created_at"] if last else None, "last_message_sender_id": last["sender_id"] if last else None}
 
     def _close_pending(self, request: dict[str, Any], next_status: str) -> None:
         self.wallet.adjust(request["buyer_id"], int(request.get("held_egp") or 0), "refund", request_id=request["id"])

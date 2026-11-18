@@ -282,3 +282,18 @@ def test_owner_cannot_reopen_reserved_listing_by_editing_status() -> None:
     client.patch(f"/api/v1/listings/{listing}", headers=seller.headers, json={"status": "active"})
 
     assert listing_status(listing) == "reserved"
+
+
+def test_read_models_include_last_message_and_entry_titles() -> None:
+    seller, buyer = User("seller@x.test"), User("buyer@x.test", balance=200)
+    listing = seller.list_book(price=100)
+    seller.decide(buyer.request(listing).json()["id"], "accepted")
+    transaction = buyer.transaction_for(listing)
+    assert transaction["last_message_at"] is None
+
+    client.post(f"/api/v1/transactions/{transaction['id']}/messages", headers=seller.headers, json={"body": "Hello"})
+
+    transaction = buyer.transaction_for(listing)
+    assert transaction["last_message_sender_id"] == seller.id and transaction["last_message_at"]
+    hold = client.get("/api/v1/wallet", headers=buyer.headers).json()["entries"][0]
+    assert hold["kind"] == "hold" and hold["listing_title"] == "sale book"
