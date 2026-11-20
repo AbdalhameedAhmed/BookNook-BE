@@ -16,6 +16,7 @@ from core.config import (
     VALID_CONDITIONS,
     platform_fee_egp,
 )
+from core.push import dispatch_pending_pushes
 from core.supabase import get_supabase_service
 from core.rate_limit import promo_check_by_user
 from crud.crud_deals import FINAL_LISTING_STATUS, get_deal_store
@@ -192,14 +193,19 @@ def update_listing(
     return item
 
 @router.post("/listings/{listing_id}/deactivate")
-def deactivate_listing(listing_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
+def deactivate_listing(
+    listing_id: str, authorization: str | None = Header(default=None)
+) -> dict[str, str]:
     user_id = _require_auth(authorization)
     _get_owned_listing(listing_id, user_id, "You can only deactivate your own listings")
     get_deal_store().close_listing(listing_id, user_id, "inactive")
+    dispatch_pending_pushes()
     return {"status": "inactive", "listing_id": listing_id}
 
 @router.post("/listings/{listing_id}/mark-complete")
-def mark_listing_complete(listing_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
+def mark_listing_complete(
+    listing_id: str, authorization: str | None = Header(default=None)
+) -> dict[str, str]:
     """Owner closes a listing that changed hands outside Rfoof. Pending requests are refunded."""
     user_id = _require_auth(authorization)
     listing = _get_owned_listing(listing_id, user_id, "You can only complete your own listings")
@@ -207,6 +213,7 @@ def mark_listing_complete(listing_id: str, authorization: str | None = Header(de
         raise HTTPException(status_code=400, detail="Only active or reserved listings can be marked complete")
     final_status = FINAL_LISTING_STATUS[str(listing["listing_type"])]
     get_deal_store().close_listing(listing_id, user_id, final_status)
+    dispatch_pending_pushes()
     return {"status": final_status, "listing_id": listing_id}
 
 @router.post("/listings/{listing_id}/requests", status_code=status.HTTP_201_CREATED)
@@ -217,9 +224,11 @@ def create_request(
 ) -> dict[str, object]:
     """Sale: holds price + fee from the buyer's wallet. Exchange: holds the fee and records the offered books."""
     buyer_id = _require_auth(authorization)
-    return get_deal_store().create_request(
+    request = get_deal_store().create_request(
         listing_id, buyer_id, payload.message, payload.offered_listing_ids, platform_fee_egp(), _promo(payload.promo_code)
     )
+    dispatch_pending_pushes()
+    return request
 
 @router.patch("/requests/{request_id}")
 def update_request(
@@ -228,9 +237,11 @@ def update_request(
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
     user_id = _require_auth(authorization)
-    return get_deal_store().update_request(
+    request = get_deal_store().update_request(
         request_id, user_id, payload.status, payload.chosen_listing_id, platform_fee_egp(), _promo(payload.promo_code)
     )
+    dispatch_pending_pushes()
+    return request
 
 @router.get("/fees")
 def get_fees() -> dict[str, int]:
@@ -332,10 +343,14 @@ def update_report(
     return report
 
 @router.post("/transactions/{transaction_id}/complete")
-def complete_transaction(transaction_id: str, authorization: str | None = Header(default=None)) -> dict[str, object]:
+def complete_transaction(
+    transaction_id: str, authorization: str | None = Header(default=None)
+) -> dict[str, object]:
     """Sale: the buyer confirms receipt and the seller is paid. Exchange: completes once both parties confirm."""
     user_id = _require_auth(authorization)
-    return get_deal_store().confirm(transaction_id, user_id)
+    transaction = get_deal_store().confirm(transaction_id, user_id)
+    dispatch_pending_pushes()
+    return transaction
 
 
 def _get_owned_listing(listing_id: str, user_id: str, forbidden_detail: str) -> dict[str, object]:

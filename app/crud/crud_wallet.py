@@ -22,6 +22,7 @@ from fastapi import HTTPException
 
 from core.supabase import get_supabase_service
 from crud.crud_item import LISTINGS, REPORTS, REQUESTS, TRANSACTIONS
+from crud.crud_notifications import MEMORY_NOTIFICATION_STORE
 from crud.crud_user import MEMORY_AUTH_STORE
 
 RECEIPT_BUCKET = "wallet-receipts"
@@ -212,11 +213,15 @@ class MemoryWalletStore:
         with self._lock:
             topup = self._pending(topup_id)
             self.adjust(topup["user_id"], topup["amount_egp"], "topup", topup_id=topup_id)
-            return self._review(topup, "approved", reviewer_id, None)
+            reviewed = self._review(topup, "approved", reviewer_id, None)
+            _notify_topup(reviewed)
+            return reviewed
 
     def reject_topup(self, topup_id: str, reviewer_id: str, note: str | None) -> dict[str, Any]:
         with self._lock:
-            return self._review(self._pending(topup_id), "rejected", reviewer_id, note or None)
+            reviewed = self._review(self._pending(topup_id), "rejected", reviewer_id, note or None)
+            _notify_topup(reviewed)
+            return reviewed
 
     def overview(self) -> dict[str, Any]:
         pending = [t for t in self.topups.values() if t["status"] == "pending"]
@@ -250,6 +255,15 @@ class MemoryWalletStore:
         now = _now()
         topup.update(status=status, review_note=note, reviewed_by=reviewer_id, reviewed_at=now, updated_at=now)
         return dict(topup)
+
+
+def _notify_topup(topup: dict[str, Any]) -> None:
+    """Memory-mode mirror of the migration 011 top-up trigger."""
+    MEMORY_NOTIFICATION_STORE.emit(
+        topup["user_id"], f"topup_{topup['status']}",
+        {"amount_egp": topup["amount_egp"], "note": (topup.get("review_note") or "")[:200] or None},
+        topup_id=topup["id"],
+    )
 
 
 def _entry_title(entry: dict[str, Any]) -> str | None:

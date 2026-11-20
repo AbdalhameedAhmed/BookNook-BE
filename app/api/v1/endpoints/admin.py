@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.deps import get_authenticated_user, is_moderator
+from core.push import dispatch_pending_pushes
 from crud.crud_deals import get_deal_store
 from crud.crud_wallet import get_wallet_store
 from crud.crud_promos import get_promo_store
@@ -48,7 +49,9 @@ def list_topups(status: Literal["pending", "approved", "rejected"] = "pending") 
 
 @router.post("/wallet-topups/{topup_id}/approve")
 def approve_topup(topup_id: UUID, moderator: Moderator) -> dict[str, object]:
-    return _public(get_wallet_store().approve_topup(str(topup_id), str(moderator["id"])))
+    topup = get_wallet_store().approve_topup(str(topup_id), str(moderator["id"]))
+    dispatch_pending_pushes()
+    return _public(topup)
 
 
 @router.post("/wallet-topups/{topup_id}/reject")
@@ -58,7 +61,9 @@ def reject_topup(
     payload: TopupReject | None = None,
 ) -> dict[str, object]:
     note = (payload.note or "").strip() if payload else ""
-    return _public(get_wallet_store().reject_topup(str(topup_id), str(moderator["id"]), note or None))
+    topup = get_wallet_store().reject_topup(str(topup_id), str(moderator["id"]), note or None)
+    dispatch_pending_pushes()
+    return _public(topup)
 
 
 @router.get("/transactions")
@@ -69,7 +74,9 @@ def list_transactions(status: Literal["arranging", "completed", "cancelled"] = "
 @router.post("/transactions/{transaction_id}/cancel")
 def cancel_transaction(transaction_id: str) -> dict[str, object]:
     """For handovers that fall through after acceptance: refunds everything held to both parties."""
-    return get_deal_store().cancel(transaction_id)
+    transaction = get_deal_store().cancel(transaction_id)
+    dispatch_pending_pushes()
+    return transaction
 
 
 @router.get("/promo-codes")

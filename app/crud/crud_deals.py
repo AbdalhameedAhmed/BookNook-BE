@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from core.supabase import get_supabase_service
 from crud.crud_item import LISTINGS, REQUESTS, TRANSACTIONS, _get_listing_or_404
+from crud.crud_notifications import MEMORY_NOTIFICATION_STORE, message_preview
 from crud.crud_promos import MEMORY_PROMO_STORE
 from crud.crud_user import MEMORY_AUTH_STORE
 from crud.crud_wallet import INSUFFICIENT_FUNDS, MEMORY_WALLET_STORE
@@ -150,6 +151,7 @@ class MemoryDealStore:
             if promo:
                 MEMORY_PROMO_STORE.record(promo, buyer_id, request["id"], "buyer", discount)
             self.wallet.adjust(buyer_id, -held, "hold", request_id=request["id"])
+            _notify(listing["seller_id"], "request_new", listing, actor_id=buyer_id, request_id=request["id"])
             return _public_request(request)
 
     def update_request(self, request_id: str, actor_id: str, next_status: str,
@@ -224,6 +226,7 @@ class MemoryDealStore:
                     self._close_pending(other, "rejected")
 
             request.update(status="accepted", held_egp=0, updated_at=now)
+            _notify(request["buyer_id"], "request_accepted", listing, actor_id=actor_id, request_id=request["id"])
             return _public_request(request)
 
     # --- Handover ---
@@ -248,6 +251,9 @@ class MemoryDealStore:
                 transaction[field] = now
                 transaction["updated_at"] = now
                 if not (transaction.get("buyer_confirmed_at") and transaction.get("seller_confirmed_at")):
+                    other = transaction["seller_id"] if is_buyer else transaction["buyer_id"]
+                    _notify(other, "deal_confirmed_by_other", _get_listing_or_404(transaction["listing_id"]),
+                            actor_id=actor_id, transaction=transaction)
                     return dict(transaction)
 
             if kind == "sale":
@@ -264,6 +270,14 @@ class MemoryDealStore:
                 status="completed", completed_at=now, updated_at=now, buyer_held_egp=0, seller_held_egp=0,
                 buyer_confirmed_at=transaction.get("buyer_confirmed_at") or now,
             )
+            # Tell whoever did not just confirm (free deals: either side may complete, so both hear).
+            if kind == "sale":
+                _notify(transaction["seller_id"], "deal_completed", listing, transaction=transaction,
+                        amount_egp=transaction["price_egp"] - transaction["seller_fee_egp"])
+            else:
+                for party in (transaction["buyer_id"], transaction["seller_id"]):
+                    if kind == "free" or party != actor_id:
+                        _notify(party, "deal_completed", listing, transaction=transaction)
             return dict(transaction)
 
     def cancel(self, transaction_id: str) -> dict[str, Any]:
@@ -278,6 +292,11 @@ class MemoryDealStore:
             for item in LISTINGS:
                 if item["id"] in {transaction["listing_id"], transaction.get("offered_listing_id")} and item["status"] == "reserved":
                     item["status"] = "active"
+            listing = _get_listing_or_404(transaction["listing_id"])
+            _notify(transaction["buyer_id"], "deal_cancelled", listing, transaction=transaction,
+                    amount_egp=transaction.get("buyer_held_egp"))
+            _notify(transaction["seller_id"], "deal_cancelled", listing, transaction=transaction,
+                    amount_egp=transaction.get("seller_held_egp"))
             transaction.update(status="cancelled", buyer_held_egp=0, seller_held_egp=0, updated_at=_now())
             return dict(transaction)
 
@@ -288,10 +307,11 @@ class MemoryDealStore:
                 raise HTTPException(status_code=404, detail="Listing not found")
             if any(t["status"] == "arranging" and listing_id in {t["listing_id"], t.get("offered_listing_id")} for t in TRANSACTIONS):
                 raise HTTPException(status_code=409, detail="This book is in an open handover. Finish or cancel the handover first.")
+            # Status first, so refunded buyers hear "no longer available" rather than "declined".
+            listing["status"] = next_status
             for request in REQUESTS:
                 if request["listing_id"] == listing_id and request["status"] == "pending":
                     self._close_pending(request, "rejected")
-            listing["status"] = next_status
             return dict(listing)
 
     # --- Read models ---
@@ -338,6 +358,10 @@ class MemoryDealStore:
         message = {"id": str(uuid4()), "transaction_id": transaction_id, "sender_id": sender_id, "body": body, "created_at": _now()}
         with self._lock:
             self.messages.append(message)
+            transaction = self._transaction_or_404(transaction_id)
+            recipient = transaction["seller_id"] if sender_id == transaction["buyer_id"] else transaction["buyer_id"]
+            _notify(recipient, "message", _get_listing_or_404(transaction["listing_id"]), actor_id=sender_id,
+                    transaction=transaction, preview=message_preview(body))
         return dict(message)
 
     # --- Helpers ---
@@ -347,9 +371,16 @@ class MemoryDealStore:
         return {"last_message_at": last["created_at"] if last else None, "last_message_sender_id": last["sender_id"] if last else None}
 
     def _close_pending(self, request: dict[str, Any], next_status: str) -> None:
-        self.wallet.adjust(request["buyer_id"], int(request.get("held_egp") or 0), "refund", request_id=request["id"])
+        held = int(request.get("held_egp") or 0)
+        self.wallet.adjust(request["buyer_id"], held, "refund", request_id=request["id"])
         MEMORY_PROMO_STORE.release(request["id"])
         request.update(status=next_status, held_egp=0, updated_at=_now())
+        listing = _get_listing_or_404(request["listing_id"])
+        if next_status == "cancelled":
+            _notify(listing["seller_id"], "request_cancelled", listing, actor_id=request["buyer_id"], request_id=request["id"])
+        else:
+            kind = "request_rejected" if next_status == "rejected" and listing["status"] == "active" else "request_unavailable"
+            _notify(request["buyer_id"], kind, listing, request_id=request["id"], amount_egp=held)
 
     @staticmethod
     def _transaction_or_404(transaction_id: str) -> dict[str, Any]:
@@ -357,6 +388,19 @@ class MemoryDealStore:
         if transaction is None:
             raise HTTPException(status_code=404, detail="Transaction not found")
         return transaction
+
+
+def _notify(user_id: str, kind: str, listing: dict[str, Any], *, actor_id: str | None = None,
+            request_id: str | None = None, transaction: dict[str, Any] | None = None,
+            amount_egp: int | None = None, preview: str | None = None) -> None:
+    """Memory-mode mirror of the migration 011 triggers."""
+    MEMORY_NOTIFICATION_STORE.emit(user_id, kind, {
+        "listing_title": listing.get("title"),
+        "actor_name": _display_name(actor_id) if actor_id else None,
+        "amount_egp": amount_egp or None,
+        "preview": preview,
+    }, transaction_id=transaction["id"] if transaction else None,
+        request_id=transaction["request_id"] if transaction else request_id, listing_id=listing.get("id"))
 
 
 def _is_own_active_listing(listing_id: str, owner_id: str) -> bool:
