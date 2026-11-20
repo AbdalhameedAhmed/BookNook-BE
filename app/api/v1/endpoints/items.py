@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Header, HTTPException, UploadFile, status
+from typing import Literal
+
+from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile, status
 
 from api.deps import (
     _get_authenticated_user,
@@ -10,7 +12,6 @@ from api.deps import (
     is_moderator,
 )
 from core.config import (
-    DEMO_USERS,
     IMAGE_SIGNATURES,
     MAX_BOOK_IMAGE_SIZE_BYTES,
     VALID_CONDITIONS,
@@ -22,6 +23,7 @@ from core.rate_limit import promo_check_by_user
 from crud.crud_deals import FINAL_LISTING_STATUS, get_deal_store
 from crud.crud_promos import PROMO_INVALID, get_promo_store
 from crud.crud_notifications import MEMORY_NOTIFICATION_STORE
+from crud.crud_profiles import memory_profile
 from crud.crud_user import MEMORY_AUTH_STORE
 from crud.crud_item import (
     LISTINGS,
@@ -40,7 +42,10 @@ def get_listings(
     condition: str | None = None,
     page: int = 1,
     page_size: int = 12,
+    seller_id: str | None = Query(default=None, max_length=64),
+    sort: Literal["newest", "price_asc"] = "newest",
 ) -> dict[str, object]:
+    """Public catalogue of available books. `seller_id` limits it to one person's shelf (profile page)."""
     if page < 1:
         raise HTTPException(status_code=400, detail="page must be at least 1")
     if page_size < 1:
@@ -55,10 +60,17 @@ def get_listings(
             condition=condition,
             page=page,
             page_size=page_size,
+            seller_id=seller_id,
+            sort=sort,
         )
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 
-    items = [_normalize_listing(item) for item in LISTINGS if item["status"] == "active"]
+    items = [
+        _normalize_listing(item) for item in LISTINGS
+        if item["status"] == "active" and (seller_id is None or item["seller_id"] == seller_id)
+    ]
+    if sort == "price_asc":
+        items.sort(key=lambda item: (item.price_egp is None, item.price_egp or 0))
 
     if q:
         query = q.lower().strip()
@@ -143,7 +155,7 @@ def create_listing(payload: ListingCreate, authorization: str | None = Header(de
         "area": payload.area,
         "meetup_preference": payload.meetup_preference,
         "seller_id": user_id,
-        "seller_name": user_id.replace("-", " ").title(),
+        "seller_name": MEMORY_AUTH_STORE.get_display_name(user_id) or user_id.replace("-", " ").title(),
         "images": payload.images,
         "created_at": "2026-10-24T00:00:00Z",
     }
@@ -268,6 +280,8 @@ def create_report(payload: ReportCreate, authorization: str | None = Header(defa
 
     if payload.listing_id is None and payload.reported_user_id is None:
         raise HTTPException(status_code=400, detail="Either listing_id or reported_user_id must be provided")
+    if payload.reported_user_id == reporter_id:
+        raise HTTPException(status_code=400, detail="You cannot report yourself")
 
     supabase = get_supabase_service()
     if supabase is not None:
@@ -279,7 +293,7 @@ def create_report(payload: ReportCreate, authorization: str | None = Header(defa
         _get_listing_or_404(payload.listing_id)
 
     if payload.reported_user_id is not None:
-        if payload.reported_user_id not in DEMO_USERS:
+        if memory_profile(payload.reported_user_id) is None:
             raise HTTPException(status_code=404, detail="Reported user not found")
 
     report_id = f"report-{len(REPORTS) + 1}"

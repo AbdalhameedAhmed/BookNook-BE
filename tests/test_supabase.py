@@ -241,6 +241,7 @@ def test_supabase_transaction_completion_uses_atomic_rpc(monkeypatch: pytest.Mon
 
 def test_supabase_report_is_persisted_for_authenticated_reporter(monkeypatch: pytest.MonkeyPatch) -> None:
     user_id = "b797b8b4-09c5-4f7f-90d4-e89a595c6c4b"
+    reported_id = "5f0c7c1e-3d7a-4a51-9c39-2f2b8d1e6a10"
     monkeypatch.setenv("RFOOF_STORAGE", "supabase")
     monkeypatch.setenv("SUPABASE_URL", "https://project.example")
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test-key")
@@ -255,7 +256,7 @@ def test_supabase_report_is_persisted_for_authenticated_reporter(monkeypatch: py
                 "id": "0dc41b11-071e-4b8b-a1eb-dbfba90c2a30",
                 "reporter_id": user_id,
                 "listing_id": None,
-                "reported_user_id": user_id,
+                "reported_user_id": reported_id,
                 "reason": "suspicious account",
                 "status": "open",
             }],
@@ -265,7 +266,7 @@ def test_supabase_report_is_persisted_for_authenticated_reporter(monkeypatch: py
     response = TestClient(main.app).post(
         "/api/v1/reports",
         headers=auth_headers,
-        json={"reported_user_id": user_id, "reason": "suspicious account"},
+        json={"reported_user_id": reported_id, "reason": "suspicious account"},
     )
 
     assert response.status_code == 201

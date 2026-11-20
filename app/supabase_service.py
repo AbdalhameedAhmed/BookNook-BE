@@ -55,6 +55,11 @@ class SupabaseService:
         ).json()
         return rows[0] if rows else {}
 
+    def public_profile(self, user_id: str) -> dict[str, Any] | None:
+        if not _is_uuid(user_id):
+            return None
+        return self.rpc("public_profile", {"p_user_id": user_id})
+
     def complete_tour(self, user_id: str, tour_id: str) -> list[str]:
         return self.rpc("complete_tour", {"p_user_id": user_id, "p_tour": tour_id}) or []
 
@@ -234,11 +239,15 @@ class SupabaseService:
         condition: str | None,
         page: int,
         page_size: int,
+        seller_id: str | None = None,
+        sort: str = "newest",
     ) -> tuple[list[dict[str, Any]], int]:
+        if seller_id is not None and not _is_uuid(seller_id):
+            return [], 0
         params = {
             "select": "*,profiles(display_name)",
             "status": "eq.active",
-            "order": "created_at.desc",
+            "order": "price_egp.asc.nullslast,created_at.desc" if sort == "price_asc" else "created_at.desc",
             "offset": str((page - 1) * page_size),
             "limit": str(page_size),
         }
@@ -249,6 +258,8 @@ class SupabaseService:
             params["listing_type"] = f"eq.{listing_type}"
         if condition:
             params["condition"] = f"eq.{condition}"
+        if seller_id:
+            params["seller_id"] = f"eq.{seller_id}"
 
         response = self.rest("GET", "listings", params=params, prefer="count=exact")
         content_range = response.headers.get("content-range", "*/0")
