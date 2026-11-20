@@ -74,6 +74,7 @@ class AuthUser(BaseModel):
     display_name: str
     role: Literal["user", "moderator"]
     avatar_url: str | None = None
+    completed_tours: list[str] = []
 
 
 class SessionResponse(BaseModel):

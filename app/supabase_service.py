@@ -47,6 +47,17 @@ class SupabaseService:
         ).json()
         return rows[0]["display_name"] if rows else None
 
+    def get_profile(self, user_id: str) -> dict[str, Any]:
+        """Display name, photo and taken tours in one read (used for /auth/me and sign-in)."""
+        rows = self.rest(
+            "GET", "profiles",
+            params={"select": "display_name,avatar_url,completed_tours", "id": f"eq.{user_id}", "limit": "1"},
+        ).json()
+        return rows[0] if rows else {}
+
+    def complete_tour(self, user_id: str, tour_id: str) -> list[str]:
+        return self.rpc("complete_tour", {"p_user_id": user_id, "p_tour": tour_id}) or []
+
     def get_avatar_url(self, user_id: str) -> str | None:
         rows = self.rest(
             "GET", "profiles", params={"select": "avatar_url", "id": f"eq.{user_id}", "limit": "1"}
@@ -186,6 +197,7 @@ class SupabaseService:
                 "transaction_not_arranging": (409, "Only arranging transactions can be completed"),
                 "unsupported_request_status": (400, "Unsupported request status update"),
                 "topup_not_found": (404, "Top-up not found"),
+                "invalid_tour": (422, "Unknown tour"),
                 "topup_not_pending": (409, "Only pending top-ups can be reviewed"),
                 "insufficient_funds": (402, "Insufficient wallet balance"),
                 "offer_required": (400, "Choose at least one of your books to offer"),

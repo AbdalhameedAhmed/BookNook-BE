@@ -167,3 +167,73 @@ def test_supabase_photo_upload_replaces_and_deletes_the_old_photo(monkeypatch: p
     patch = next(c for c in calls if c[0] == "PATCH")
     assert patch[1] == "profiles" and patch[2]["avatar_url"] == new_url
     assert ("DELETE", f"{base}/book-images/avatars/{user_id}/old.png", None) in calls
+
+
+# --- Guided tours taken (migration 014) ---
+
+def test_taken_tours_are_saved_on_the_account() -> None:
+    _, headers = make_user()
+    assert client.get("/api/v1/auth/me", headers=headers).json()["completed_tours"] == []
+
+    first = client.post("/api/v1/me/tours/welcome/complete", headers=headers)
+    again = client.post("/api/v1/me/tours/welcome/complete", headers=headers)
+    wallet = client.post("/api/v1/me/tours/wallet/complete", headers=headers)
+
+    assert first.json() == {"completed_tours": ["welcome"]}
+    assert again.json() == {"completed_tours": ["welcome"]}, "taking a tour twice is not a duplicate"
+    assert wallet.json() == {"completed_tours": ["welcome", "wallet"]}
+    assert client.get("/api/v1/auth/me", headers=headers).json()["completed_tours"] == ["welcome", "wallet"]
+    login = client.post("/api/v1/auth/login", json={"email": "reader@example.com", "password": PASSWORD})
+    assert login.json()["user"]["completed_tours"] == ["welcome", "wallet"], "a new browser sees them at sign-in"
+
+
+def test_tours_need_sign_in_and_a_valid_id() -> None:
+    _, headers = make_user()
+    assert client.post("/api/v1/me/tours/welcome/complete").status_code == 401
+    for bad in ["Welcome", "1st", "a" * 33, "we%20lcome"]:
+        assert client.post(f"/api/v1/me/tours/{bad}/complete", headers=headers).status_code == 422, bad
+
+
+def test_tours_are_per_user() -> None:
+    _, first = make_user()
+    _, second = make_user("other@example.com")
+    client.post("/api/v1/me/tours/welcome/complete", headers=first)
+    assert client.get("/api/v1/auth/me", headers=second).json()["completed_tours"] == []
+
+
+def test_supabase_tour_completion_uses_the_rpc(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.auth_settings import get_auth_settings
+    from supabase_service import get_supabase_service
+    from tests.test_supabase import sign_in_as
+
+    user_id = "b797b8b4-09c5-4f7f-90d4-e89a595c6c4b"
+    monkeypatch.setenv("RFOOF_STORAGE", "supabase")
+    monkeypatch.setenv("SUPABASE_URL", "https://project.example")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test-key")
+    monkeypatch.setenv("AUTH_JWT_SECRET", "test-secret-" + "x" * 40)
+    get_supabase_service.cache_clear()
+    get_auth_settings.cache_clear()
+    headers = sign_in_as(monkeypatch, user_id)
+    calls: list[tuple[str, object]] = []
+
+    def fake_request(method: str, url: str, *, json=None, params=None, **_: object) -> httpx.Response:
+        name = url.rsplit("/", 1)[-1]
+        calls.append((name, json if method == "POST" else params.get("select")))
+        if name == "complete_tour":
+            return httpx.Response(200, json=["welcome"])
+        return httpx.Response(200, json=[{"display_name": "Reader", "avatar_url": None, "completed_tours": ["welcome"]}])
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+    try:
+        done = client.post("/api/v1/me/tours/welcome/complete", headers=headers).json()
+        me = client.get("/api/v1/auth/me", headers=headers).json()
+    finally:
+        get_supabase_service.cache_clear()
+        get_auth_settings.cache_clear()
+
+    assert done == {"completed_tours": ["welcome"]}
+    assert me["completed_tours"] == ["welcome"] and me["display_name"] == "Reader"
+    assert calls == [
+        ("complete_tour", {"p_user_id": user_id, "p_tour": "welcome"}),
+        ("profiles", "display_name,avatar_url,completed_tours"),
+    ], "one profile read for /auth/me"

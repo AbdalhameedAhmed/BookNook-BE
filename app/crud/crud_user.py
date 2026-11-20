@@ -26,6 +26,7 @@ class MemoryAuthStore:
         self.display_names: dict[str, str] = {}
         self.tokens: dict[str, dict[str, Any]] = {}
         self.avatar_urls: dict[str, str] = {}
+        self.completed_tours: dict[str, list[str]] = {}
 
     def find_user_by_email(self, email: str) -> dict[str, Any] | None:
         return next((dict(user) for user in self.users.values() if user["email"] == email), None)
@@ -39,6 +40,21 @@ class MemoryAuthStore:
 
     def get_display_name(self, user_id: str) -> str | None:
         return self.display_names.get(user_id)
+
+    def get_profile(self, user_id: str) -> dict[str, Any]:
+        return {
+            "display_name": self.display_names.get(user_id),
+            "avatar_url": self.avatar_urls.get(user_id),
+            "completed_tours": list(self.completed_tours.get(user_id, [])),
+        }
+
+    def complete_tour(self, user_id: str, tour_id: str) -> list[str]:
+        """Mirror of complete_tour (migration 014)."""
+        with self._lock:
+            tours = self.completed_tours.setdefault(user_id, [])
+            if tour_id not in tours and len(tours) < 32:
+                tours.append(tour_id)
+            return list(tours)
 
     def get_avatar_url(self, user_id: str) -> str | None:
         return self.avatar_urls.get(user_id)

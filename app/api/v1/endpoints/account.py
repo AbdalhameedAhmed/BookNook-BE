@@ -1,11 +1,11 @@
-"""Account settings for the signed-in user: profile photo and email change. See docs/settings.md."""
+"""Account settings for the signed-in user: profile photo, email change, taken tours. See docs/settings.md."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Path, UploadFile, status
 
 from api.deps import get_current_user_id
 from core import rate_limit
@@ -57,6 +57,14 @@ def remove_avatar(user_id: CurrentUserId) -> None:
     supabase = get_supabase_service()
     if previous and supabase is not None:
         supabase.delete_avatar_object(user_id, previous)
+
+
+@router.post("/tours/{tour_id}/complete")
+def complete_tour(
+    user_id: CurrentUserId, tour_id: Annotated[str, Path(pattern=r"^[a-z][a-z0-9_-]{0,31}$")]
+) -> dict[str, list[str]]:
+    """Records that the user took (or skipped) a guided tour, so no browser shows it again on its own."""
+    return {"completed_tours": get_auth_store().complete_tour(user_id, tour_id)}
 
 
 @router.post("/email", status_code=status.HTTP_202_ACCEPTED, response_model=MessageResponse)

@@ -132,13 +132,7 @@ def confirm_email_change(payload: TokenRequest, request: Request, background: Ba
 def read_current_user(current_user: dict[str, object] = Depends(get_authenticated_user)) -> AuthUser:
     store = get_auth_store()
     user_id = str(current_user["id"])
-    return AuthUser(
-        id=user_id,
-        email=str(current_user["email"]),
-        display_name=store.get_display_name(user_id) or _fallback_name(str(current_user["email"])),
-        role=current_user["role"],
-        avatar_url=store.get_avatar_url(user_id),
-    )
+    return _auth_user(store, user_id, str(current_user["email"]), str(current_user["role"]))
 
 
 def _session_for(store: Any, user: dict[str, Any]) -> SessionResponse:
@@ -147,13 +141,19 @@ def _session_for(store: Any, user: dict[str, Any]) -> SessionResponse:
     return SessionResponse(
         access_token=access_token,
         expires_in=expires_in,
-        user=AuthUser(
-            id=user_id,
-            email=user["email"],
-            display_name=store.get_display_name(user_id) or _fallback_name(user["email"]),
-            role=user.get("role") or "user",
-            avatar_url=store.get_avatar_url(user_id),
-        ),
+        user=_auth_user(store, user_id, user["email"], user.get("role") or "user"),
+    )
+
+
+def _auth_user(store: Any, user_id: str, email: str, role: str) -> AuthUser:
+    profile = store.get_profile(user_id)
+    return AuthUser(
+        id=user_id,
+        email=email,
+        display_name=profile.get("display_name") or _fallback_name(email),
+        role=role,
+        avatar_url=profile.get("avatar_url"),
+        completed_tours=profile.get("completed_tours") or [],
     )
 
 
