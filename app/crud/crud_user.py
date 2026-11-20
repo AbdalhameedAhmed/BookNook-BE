@@ -33,6 +33,9 @@ class MemoryAuthStore:
         user = self.users.get(user_id)
         return dict(user) if user else None
 
+    def moderator_ids(self) -> list[str]:
+        return [user_id for user_id, user in self.users.items() if user.get("role") == "moderator"]
+
     def get_display_name(self, user_id: str) -> str | None:
         return self.display_names.get(user_id)
 

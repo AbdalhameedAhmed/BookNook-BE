@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.deps import get_authenticated_user, is_moderator
-from core.push import dispatch_pending_pushes
+from core.push import dispatch_pending_notifications
 from crud.crud_deals import get_deal_store
 from crud.crud_wallet import get_wallet_store
 from crud.crud_promos import get_promo_store
@@ -50,7 +50,7 @@ def list_topups(status: Literal["pending", "approved", "rejected"] = "pending") 
 @router.post("/wallet-topups/{topup_id}/approve")
 def approve_topup(topup_id: UUID, moderator: Moderator) -> dict[str, object]:
     topup = get_wallet_store().approve_topup(str(topup_id), str(moderator["id"]))
-    dispatch_pending_pushes()
+    dispatch_pending_notifications()
     return _public(topup)
 
 
@@ -62,7 +62,7 @@ def reject_topup(
 ) -> dict[str, object]:
     note = (payload.note or "").strip() if payload else ""
     topup = get_wallet_store().reject_topup(str(topup_id), str(moderator["id"]), note or None)
-    dispatch_pending_pushes()
+    dispatch_pending_notifications()
     return _public(topup)
 
 
@@ -75,7 +75,7 @@ def list_transactions(status: Literal["arranging", "completed", "cancelled"] = "
 def cancel_transaction(transaction_id: str) -> dict[str, object]:
     """For handovers that fall through after acceptance: refunds everything held to both parties."""
     transaction = get_deal_store().cancel(transaction_id)
-    dispatch_pending_pushes()
+    dispatch_pending_notifications()
     return transaction
 
 

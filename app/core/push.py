@@ -1,11 +1,12 @@
-"""Web Push delivery for notifications.
+"""Web Push and email delivery for notifications.
 
-Endpoints that change deal or wallet state call ``dispatch_pending_pushes`` before responding.
+Endpoints that change deal or wallet state call ``dispatch_pending_notifications`` before responding.
 This is deliberate: on serverless hosts (Vercel) work scheduled after the response, such as FastAPI
 background tasks, is not guaranteed to run. It claims notifications that have not been pushed yet
 (so concurrent requests never send the same one twice) and sends each to the user's subscribed
 browsers, with a short timeout so a slow push service delays the response by seconds at most.
-Without VAPID keys configured, push is switched off and notifications are in-app only.
+Without VAPID keys configured, push is switched off. Request notifications
+(EMAIL_KINDS) are also emailed to the owner's confirmed address unless NOTIFICATION_EMAILS=off.
 
 Generate keys with ``python scripts/generate_vapid_keys.py``.
 """
@@ -19,6 +20,7 @@ from typing import Any
 
 from pywebpush import WebPushException, webpush
 
+from core.email import NotificationEmail, send_notification_emails
 from crud.crud_notifications import get_notification_store
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,9 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
         "message": ("{actor}", "{preview}"),
         "topup_approved": ("Top-up approved", "{amount} EGP was added to your wallet."),
         "topup_rejected": ("Top-up rejected", "Your top-up of {amount} EGP was not approved."),
+        "topup_submitted": ("Top-up to review", "{actor} sent a top-up of {amount} EGP for review."),
+        "report_new": ("New report", "{actor} reported “{title}”: {preview}"),
+        "report_user": ("New report", "{actor} reported a user: {preview}"),
     },
     "ar": {
         "request_new": ("طلب جديد", "{actor} يريد «{title}»"),
@@ -55,6 +60,9 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
         "message": ("{actor}", "{preview}"),
         "topup_approved": ("تم قبول الشحن", "تمت إضافة {amount} ج.م إلى محفظتك."),
         "topup_rejected": ("تم رفض الشحن", "لم تتم الموافقة على شحن {amount} ج.م."),
+        "topup_submitted": ("شحن بانتظار المراجعة", "أرسل {actor} طلب شحن بقيمة {amount} ج.م للمراجعة."),
+        "report_new": ("بلاغ جديد", "أبلغ {actor} عن «{title}»: {preview}"),
+        "report_user": ("بلاغ جديد", "أبلغ {actor} عن مستخدم: {preview}"),
     },
 }
 MONEY_SUFFIX = {
@@ -75,7 +83,15 @@ LINKS = {
     "message": "/account/handovers",
     "topup_approved": "/account/wallet",
     "topup_rejected": "/account/wallet",
+    "topup_submitted": "/admin/topups",
+    "report_new": "/admin",
 }
+
+# Only request updates are emailed (plus the auth emails in core/email.py).
+# Handover progress, chat, wallet and moderator alerts stay in-app and push only.
+EMAIL_KINDS = frozenset({
+    "request_new", "request_accepted", "request_rejected", "request_unavailable", "request_cancelled",
+})
 
 
 def vapid_public_key() -> str | None:
@@ -105,7 +121,8 @@ def build_payload(notification: dict[str, Any], lang: str) -> dict[str, Any]:
         "refund": suffix["refund"].format(amount=amount) if amount else "",
         "payout": suffix["payout"].format(amount=amount) if amount else "",
     }
-    title, body = TEXTS[lang].get(kind, ("Rfoof", ""))
+    text_key = "report_user" if kind == "report_new" and not data.get("listing_title") else kind
+    title, body = TEXTS[lang].get(text_key, ("Rfoof", ""))
     count = int(notification.get("count") or 1)
     if kind == "message" and count > 1:
         body = f"({count}) {body}"
@@ -120,22 +137,47 @@ def build_payload(notification: dict[str, Any], lang: str) -> dict[str, Any]:
     }
 
 
-def dispatch_pending_pushes() -> int:
-    """Sends every unpushed notification to its owner's browsers. Returns the number of pushes sent."""
-    if not push_enabled():
+def notification_emails_enabled() -> bool:
+    return os.getenv("NOTIFICATION_EMAILS", "on").strip().lower() not in {"off", "false", "0", "no"}
+
+
+def dispatch_pending_notifications() -> int:
+    """Pushes every undelivered notification to its owner's browsers and emails the request ones.
+
+    Returns the number of pushes sent. Never raises: the user's action already succeeded.
+    """
+    pushing = push_enabled()
+    emailing = notification_emails_enabled()
+    if not (pushing or emailing):
         return 0
     store = get_notification_store()
     sent = 0
     try:
         claimed = store.claim_unpushed(CLAIM_BATCH)
-    except Exception:  # noqa: BLE001 - background task: never crash the worker
-        logger.exception("Could not claim notifications for push")
+    except Exception:  # noqa: BLE001 - never fail the user's request over a notification
+        logger.exception("Could not claim notifications for delivery")
         return 0
+    emails = []
     for notification in claimed:
-        for subscription in notification.get("subscriptions") or []:
-            if _send(store, subscription, build_payload(notification, subscription.get("lang", "en"))):
-                sent += 1
+        if pushing:
+            for subscription in notification.get("subscriptions") or []:
+                if _send(store, subscription, build_payload(notification, subscription.get("lang", "en"))):
+                    sent += 1
+        if emailing and notification.get("kind") in EMAIL_KINDS and notification.get("email"):
+            emails.append(build_email(notification))
+    if emails:
+        send_notification_emails(emails)
     return sent
+
+
+def build_email(notification: dict[str, Any]) -> NotificationEmail:
+    """Bilingual email for one notification, reusing the push texts."""
+    en, ar = build_payload(notification, "en"), build_payload(notification, "ar")
+    return NotificationEmail(
+        to_address=str(notification["email"]),
+        en_title=en["title"], en_body=en["body"], ar_title=ar["title"], ar_body=ar["body"],
+        path=en["url"],
+    )
 
 
 def _send(store: Any, subscription: dict[str, Any], payload: dict[str, Any]) -> bool:

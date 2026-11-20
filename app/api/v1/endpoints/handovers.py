@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from api.deps import get_current_user_id
-from core.push import dispatch_pending_pushes
+from core.push import dispatch_pending_notifications
 from core.rate_limit import message_by_user
 from crud.crud_deals import get_deal_store
 
@@ -36,7 +36,7 @@ def send_message(transaction_id: str, payload: MessageCreate, user_id: CurrentUs
         raise HTTPException(status_code=422, detail="Message cannot be empty")
     message_by_user.hit(user_id)
     message = get_deal_store().add_message(transaction_id, user_id, body)
-    dispatch_pending_pushes()
+    dispatch_pending_notifications()
     return message
 
 

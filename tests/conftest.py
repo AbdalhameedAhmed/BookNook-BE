@@ -27,5 +27,6 @@ def use_memory_storage_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     MEMORY_NOTIFICATION_STORE.reset()
     monkeypatch.delenv("VAPID_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("VAPID_PRIVATE_KEY", raising=False)
+    monkeypatch.setenv("NOTIFICATION_EMAILS", "off")
     for limiter in rate_limit.ALL_LIMITERS:
         limiter.reset()

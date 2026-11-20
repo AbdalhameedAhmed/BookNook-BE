@@ -190,6 +190,12 @@ class MemoryWalletStore:
         }
         with self._lock:
             self.topups[topup["id"]] = topup
+        # Memory-mode mirror of the migration 012 trigger: moderators review pending top-ups.
+        MEMORY_NOTIFICATION_STORE.emit_to_moderators(
+            topup["user_id"], "topup_submitted",
+            {"actor_name": MEMORY_AUTH_STORE.get_display_name(topup["user_id"]), "amount_egp": topup["amount_egp"]},
+            topup_id=topup["id"],
+        )
         return dict(topup)
 
     def list_topups(self, *, user_id: str | None = None, status: str | None = None) -> list[dict[str, Any]]:

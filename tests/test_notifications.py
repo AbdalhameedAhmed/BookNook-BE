@@ -225,7 +225,7 @@ def test_push_is_off_without_vapid_keys() -> None:
     user = User("u@x.test")
     assert client.get("/api/v1/push/public-key").status_code == 404
     assert client.post("/api/v1/me/push-subscriptions", headers=user.headers, json=SUBSCRIPTION).status_code == 404
-    assert push.dispatch_pending_pushes() == 0
+    assert push.dispatch_pending_notifications() == 0
 
 
 def test_public_key_is_served_when_configured(push_on) -> None:
@@ -273,7 +273,7 @@ def test_request_pushes_to_sellers_browser_in_their_language(push_on) -> None:
     assert call["vapid_private_key"] == "test-private-key"
     assert '"title": "طلب جديد"' in call["data"]
     assert "Buyer" in call["data"] and "/account/requests" in call["data"]
-    assert push.dispatch_pending_pushes() == 0, "already-pushed notifications are not sent again"
+    assert push.dispatch_pending_notifications() == 0, "already-pushed notifications are not sent again"
 
 
 def test_each_chat_message_repushes_the_collapsed_thread(push_on) -> None:
@@ -365,3 +365,135 @@ def test_supabase_mode_calls_notification_rpcs(monkeypatch: pytest.MonkeyPatch) 
         ("unread_notification_count", {"p_user_id": user_id}),
         ("delete_push_subscription", {"p_endpoint": "https://p.example/x", "p_user_id": user_id}),
     ]
+
+
+# --- Moderator alerts (migration 012) ---
+
+def test_new_topup_alerts_moderators_but_not_the_submitter() -> None:
+    owner, mod = User("owner@x.test"), User("mod@x.test", role="moderator")
+    other_mod = User("mod2@x.test", role="moderator")
+    MEMORY_WALLET_STORE.create_topup({"user_id": owner.id, "method": "e_wallet", "sender_number": "01012345678",
+                                      "recipient_number": "01109261212", "receipt_path": "x", "amount_egp": 200})
+
+    for moderator in (mod, other_mod):
+        [item] = notifications(moderator)
+        assert item["kind"] == "topup_submitted" and item["data"] == {"actor_name": "Owner", "amount_egp": 200}
+    assert notifications(owner) == []
+
+
+def test_new_report_alerts_moderators() -> None:
+    seller, reporter, mod = User("seller@x.test"), User("reporter@x.test"), User("mod@x.test", role="moderator")
+    listing = seller.list_book(price=100)
+
+    response = client.post("/api/v1/reports", headers=reporter.headers,
+                           json={"listing_id": listing, "reason": "Fake listing"})
+
+    assert response.status_code == 201, response.text
+    [item] = notifications(mod)
+    assert item["kind"] == "report_new" and item["listing_id"] == listing
+    assert item["data"] == {"actor_name": "Reporter", "listing_title": "sale book", "preview": "Fake listing"}
+    assert notifications(seller) == [] and notifications(reporter) == []
+
+
+# --- Email for request updates only ---
+
+@pytest.fixture
+def emails_on(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Turns notification emails on and records them instead of sending."""
+    monkeypatch.setenv("NOTIFICATION_EMAILS", "on")
+    sent: list = []
+    monkeypatch.setattr(push, "send_notification_emails", lambda emails: sent.extend(emails))
+    return sent
+
+
+def confirmed(user: User) -> User:
+    from datetime import datetime, timezone
+
+    from crud.crud_user import MEMORY_AUTH_STORE
+    MEMORY_AUTH_STORE.users[user.id]["email_confirmed_at"] = datetime.now(timezone.utc)
+    return user
+
+
+def test_only_request_updates_are_emailed(emails_on) -> None:
+    seller, buyer = confirmed(User("seller@x.test")), confirmed(User("buyer@x.test", balance=500))
+    listing = seller.list_book(price=100)
+    request_id = buyer.request(listing).json()["id"]
+    seller.decide(request_id, "accepted")
+    transaction = buyer.transaction_for(listing)
+    client.post(f"/api/v1/handovers/{transaction['id']}/messages", headers=buyer.headers, json={"body": "Hi"})
+    buyer.confirm(transaction["id"])
+
+    assert [(e.to_address, e.en_title) for e in emails_on] == [
+        ("seller@x.test", "New request"),
+        ("buyer@x.test", "Request accepted"),
+    ], "chat messages and handover progress are never emailed"
+    assert "deal_completed" in kinds(seller), "completion is still notified in-app"
+    assert emails_on[0].path == "/account/requests" and "Buyer" in emails_on[0].en_body
+    assert emails_on[0].ar_title == "طلب جديد"
+
+
+def test_wallet_and_moderator_alerts_are_not_emailed(emails_on) -> None:
+    owner, mod = confirmed(User("owner@x.test")), confirmed(User("mod@x.test", role="moderator"))
+    topup = MEMORY_WALLET_STORE.create_topup({"user_id": owner.id, "method": "e_wallet", "sender_number": "01012345678",
+                                              "recipient_number": "01109261212", "receipt_path": "x", "amount_egp": 200})
+    client.post(f"/api/v1/admin/wallet-topups/{topup['id']}/approve", headers=mod.headers)
+
+    assert kinds(owner) == ["topup_approved"] and kinds(mod) == ["topup_submitted"]
+    assert emails_on == []
+
+
+def test_unconfirmed_addresses_and_switched_off_emails_get_nothing(emails_on, monkeypatch: pytest.MonkeyPatch) -> None:
+    seller, buyer = User("seller@x.test"), User("buyer@x.test", balance=500)
+    buyer.request(seller.list_book(price=100))
+    assert emails_on == [], "the seller never confirmed their email"
+
+    monkeypatch.setenv("NOTIFICATION_EMAILS", "off")
+    confirmed(seller)
+    buyer2 = User("buyer2@x.test", balance=500)
+    buyer2.request(seller.list_book(price=50))
+    assert emails_on == []
+
+
+def test_notification_email_escapes_user_text_and_keeps_it_out_of_the_subject() -> None:
+    from core.email import notification_message
+
+    payload = push.build_email({"id": "n1", "kind": "request_new", "transaction_id": None, "email": "s@x.test",
+                                "data": {"actor_name": "<script>x</script>", "listing_title": "Dune\r\nBcc: a@b.c"}})
+    message, body = notification_message(payload, "Rfoof <no-reply@x.test>")
+
+    assert message["Subject"] == "Rfoof: New request | طلب جديد"
+    assert message["To"] == "s@x.test" and message["Bcc"] is None
+    html_part = message.get_payload()[1].get_payload()[0].get_content()
+    assert "<script>" not in html_part and "&lt;script&gt;" in html_part
+    assert "http://localhost:5173/account/requests" in body
+
+
+def test_notification_emails_share_one_smtp_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core import email as email_module
+    from core.auth_settings import get_auth_settings
+
+    monkeypatch.setenv("EMAIL_BACKEND", "smtp")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_FROM", "Rfoof <no-reply@example.test>")
+    monkeypatch.setenv("SMTP_USERNAME", "")
+    monkeypatch.setenv("SMTP_SECURITY", "starttls")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    get_auth_settings.cache_clear()
+    connections: list[list] = []
+
+    class FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            self.sent: list = []
+            connections.append(self.sent)
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def starttls(self) -> None: pass
+        def send_message(self, message) -> None: self.sent.append(message["To"])
+
+    monkeypatch.setattr(email_module.smtplib, "SMTP", FakeSMTP)
+    emails = [push.build_email({"id": str(i), "kind": "deal_completed", "transaction_id": "t", "email": f"u{i}@x.test",
+                                "data": {"listing_title": "Dune"}}) for i in range(3)]
+    email_module.send_notification_emails(emails)
+    get_auth_settings.cache_clear()
+
+    assert connections == [["u0@x.test", "u1@x.test", "u2@x.test"]]

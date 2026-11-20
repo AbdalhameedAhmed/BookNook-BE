@@ -1,6 +1,6 @@
 """In-app notifications and Web Push subscriptions.
 
-With Supabase, notification rows are written by the triggers in migration 011, so this store only
+With Supabase, notification rows are written by the triggers in migrations 011 and 012, so this store only
 reads, marks read, and manages push subscriptions. The memory store mirrors those triggers through
 ``emit()``, which the memory deal and wallet stores call at the same points. See docs/notifications.md.
 """
@@ -13,6 +13,7 @@ from typing import Any
 from uuid import uuid4
 
 from core.supabase import get_supabase_service
+from crud.crud_user import MEMORY_AUTH_STORE
 
 MAX_PAGE_SIZE = 100
 MAX_SUBSCRIPTIONS_PER_USER = 10
@@ -50,7 +51,7 @@ class SupabaseNotificationStore:
 
 
 class MemoryNotificationStore:
-    """Demo/test-only mirror of migration 011. Keep the two in step."""
+    """Demo/test-only mirror of migrations 011 and 012. Keep the two in step."""
 
     def __init__(self) -> None:
         self._lock = RLock()
@@ -77,6 +78,13 @@ class MemoryNotificationStore:
                 "request_id": request_id, "listing_id": listing_id, "topup_id": topup_id, "data": data,
                 "count": 1, "read_at": None, "pushed_at": None, "created_at": _now(),
             })
+
+    def emit_to_moderators(self, actor_id: str | None, kind: str, data: dict[str, Any], *,
+                           listing_id: str | None = None, topup_id: str | None = None) -> None:
+        """Mirror of notify_moderators (migration 012): every moderator except the actor."""
+        for moderator_id in MEMORY_AUTH_STORE.moderator_ids():
+            if moderator_id != actor_id:
+                self.emit(moderator_id, kind, data, listing_id=listing_id, topup_id=topup_id)
 
     def list(self, user_id: str, limit: int, before: datetime | None) -> dict[str, Any]:
         with self._lock:
@@ -130,7 +138,9 @@ class MemoryNotificationStore:
                 n["pushed_at"] = _now()
                 subs = [{k: s[k] for k in ("endpoint", "p256dh", "auth", "lang")}
                         for s in self.subscriptions.values() if s["user_id"] == n["user_id"]]
-                claimed.append({**_public(n), "subscriptions": subs})
+                owner = MEMORY_AUTH_STORE.get_user(n["user_id"]) or {}
+                email = owner.get("email") if owner.get("email_confirmed_at") else None
+                claimed.append({**_public(n), "email": email, "subscriptions": subs})
             return claimed
 
     def _newest_first(self) -> list[dict[str, Any]]:

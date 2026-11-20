@@ -17,6 +17,7 @@ from core.config import (
     TOPUP_METHODS,
     platform_fee_egp,
 )
+from core.push import dispatch_pending_notifications
 from core.rate_limit import topup_by_user
 from crud.crud_wallet import charging_options, ewallet_recipient_number, get_wallet_store
 
@@ -81,6 +82,7 @@ def create_topup(
         "amount_egp": amount_egp,
         "receipt_path": receipt_path,
     })
+    dispatch_pending_notifications()
     return _owner_view(topup)
 
 

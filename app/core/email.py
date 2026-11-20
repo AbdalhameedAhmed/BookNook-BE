@@ -1,9 +1,10 @@
-"""Transactional email for account confirmation and password reset.
+"""Transactional email: account confirmation, password reset, and request updates.
 
 Each email is multipart: a plain-text body plus an HTML alternative rendered from
 ``email_templates/layout.html`` (the Stitch email design), with the app icon attached
-inline as ``cid:rfoof-icon``. No user-supplied content goes into these emails; the only
-dynamic value is the link, and every slot is HTML-escaped anyway.
+inline as ``cid:rfoof-icon``. Auth emails contain no user-supplied content. Request
+emails include a book title and a display name in the body only (never the
+subject), and every HTML slot is escaped.
 
 ``EMAIL_BACKEND=console`` prints the plain-text version to stdout for local development
 instead of sending; never use it in production because the printed links are live credentials.
@@ -74,6 +75,21 @@ RESET_COPY = EmailCopy(
     ar_note="إذا لم تكن أنت، تجاهل هذه الرسالة ولن تتغير كلمة المرور.",
     note_style="ochre",
 )
+
+
+NOTIFICATION_SMTP_TIMEOUT_SECONDS = 8
+
+
+@dataclass(frozen=True)
+class NotificationEmail:
+    """One request update, with texts already built in both languages (see core/push.py)."""
+
+    to_address: str
+    en_title: str
+    en_body: str
+    ar_title: str
+    ar_body: str
+    path: str
 
 
 @lru_cache(maxsize=1)
@@ -157,6 +173,41 @@ def send_password_reset_email(to_address: str, raw_token: str) -> None:
     )
 
 
+def notification_message(email: NotificationEmail, sender: str) -> tuple[EmailMessage, str]:
+    """The message for one notification and its plain-text body."""
+    link = f"{get_auth_settings().frontend_url}{email.path}"
+    # Titles of emailed kinds are fixed texts: user-supplied titles and names never go into a header.
+    subject = f"Rfoof: {email.en_title} | {email.ar_title}"
+    copy = EmailCopy(
+        preheader=email.en_body,
+        en_heading=email.en_title,
+        en_body=email.en_body,
+        en_button="Open Rfoof",
+        en_note="Rfoof emails you about your book requests.",
+        ar_heading=email.ar_title,
+        ar_body=email.ar_body,
+        ar_button="افتح رفوف",
+        ar_note="يرسل لك رفوف رسائل بخصوص طلبات كتبك.",
+    )
+    body = (
+        f"{email.en_title}\n\n{email.en_body}\n\nOpen Rfoof: {link}\n\n---\n\n"
+        f"{email.ar_title}\n\n{email.ar_body}\n\nافتح رفوف: {link}\n"
+    )
+    return build_message(email.to_address, subject, body, copy, link, sender), body
+
+
+def send_notification_emails(emails: list[NotificationEmail]) -> None:
+    """Sends request update emails over one SMTP connection. Never raises."""
+    settings = get_auth_settings()
+    sender = settings.smtp_from or "Rfoof <no-reply@localhost>"
+    built = [notification_message(email, sender) for email in emails]
+    if settings.email_backend == "console":
+        for message, body in built:
+            print(f"\n[dev email] To: {message['To']}\nSubject: {message['Subject']}\n\n{body}", flush=True)
+        return
+    _deliver([message for message, _ in built], NOTIFICATION_SMTP_TIMEOUT_SECONDS, "Notification")
+
+
 def build_message(to_address: str, subject: str, body: str, copy: EmailCopy, link: str, sender: str) -> EmailMessage:
     """multipart/alternative: plain text first, then HTML (multipart/related with the inline icon)."""
     message = EmailMessage()
@@ -178,19 +229,29 @@ def _send(to_address: str, subject: str, copy: EmailCopy, link: str, body: str) 
         return
 
     message = build_message(to_address, subject, body, copy, link, settings.smtp_from or "Rfoof <no-reply@localhost>")
+    if _deliver([message], 15, "Auth"):
+        logger.warning("Auth email sent via %s (%s)", settings.smtp_host, subject.split(" | ")[0])
+
+
+def _deliver(messages: list[EmailMessage], timeout: int, label: str) -> bool:
+    """Sends over one SMTP connection. Logs failures without bodies (they may hold live tokens)."""
+    settings = get_auth_settings()
     try:
         smtp_class = smtplib.SMTP_SSL if settings.smtp_security == "ssl" else smtplib.SMTP
-        with smtp_class(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+        with smtp_class(settings.smtp_host, settings.smtp_port, timeout=timeout) as smtp:
             if settings.smtp_security == "starttls":
                 smtp.starttls()
             if settings.smtp_username:
                 smtp.login(settings.smtp_username, settings.smtp_password)
-            smtp.send_message(message)
+            for message in messages:
+                try:
+                    smtp.send_message(message)
+                except smtplib.SMTPRecipientsRefused:
+                    logger.warning("%s email refused by the SMTP server for one recipient", label)
     except (smtplib.SMTPException, OSError) as error:
-        # Log the SMTP/network error to aid setup, but never the body: it contains a live token.
         logger.error(
-            "Auth email could not be sent via %s:%s: %s: %s",
-            settings.smtp_host, settings.smtp_port, type(error).__name__, error,
+            "%s email could not be sent via %s:%s: %s: %s",
+            label, settings.smtp_host, settings.smtp_port, type(error).__name__, error,
         )
-        return
-    logger.warning("Auth email sent via %s (%s)", settings.smtp_host, subject.split(" | ")[0])
+        return False
+    return True

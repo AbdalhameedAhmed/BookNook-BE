@@ -16,11 +16,13 @@ from core.config import (
     VALID_CONDITIONS,
     platform_fee_egp,
 )
-from core.push import dispatch_pending_pushes
+from core.push import dispatch_pending_notifications
 from core.supabase import get_supabase_service
 from core.rate_limit import promo_check_by_user
 from crud.crud_deals import FINAL_LISTING_STATUS, get_deal_store
 from crud.crud_promos import PROMO_INVALID, get_promo_store
+from crud.crud_notifications import MEMORY_NOTIFICATION_STORE
+from crud.crud_user import MEMORY_AUTH_STORE
 from crud.crud_item import (
     LISTINGS,
     REPORTS,
@@ -199,7 +201,7 @@ def deactivate_listing(
     user_id = _require_auth(authorization)
     _get_owned_listing(listing_id, user_id, "You can only deactivate your own listings")
     get_deal_store().close_listing(listing_id, user_id, "inactive")
-    dispatch_pending_pushes()
+    dispatch_pending_notifications()
     return {"status": "inactive", "listing_id": listing_id}
 
 @router.post("/listings/{listing_id}/mark-complete")
@@ -213,7 +215,7 @@ def mark_listing_complete(
         raise HTTPException(status_code=400, detail="Only active or reserved listings can be marked complete")
     final_status = FINAL_LISTING_STATUS[str(listing["listing_type"])]
     get_deal_store().close_listing(listing_id, user_id, final_status)
-    dispatch_pending_pushes()
+    dispatch_pending_notifications()
     return {"status": final_status, "listing_id": listing_id}
 
 @router.post("/listings/{listing_id}/requests", status_code=status.HTTP_201_CREATED)
@@ -227,7 +229,7 @@ def create_request(
     request = get_deal_store().create_request(
         listing_id, buyer_id, payload.message, payload.offered_listing_ids, platform_fee_egp(), _promo(payload.promo_code)
     )
-    dispatch_pending_pushes()
+    dispatch_pending_notifications()
     return request
 
 @router.patch("/requests/{request_id}")
@@ -240,7 +242,7 @@ def update_request(
     request = get_deal_store().update_request(
         request_id, user_id, payload.status, payload.chosen_listing_id, platform_fee_egp(), _promo(payload.promo_code)
     )
-    dispatch_pending_pushes()
+    dispatch_pending_notifications()
     return request
 
 @router.get("/fees")
@@ -269,7 +271,9 @@ def create_report(payload: ReportCreate, authorization: str | None = Header(defa
 
     supabase = get_supabase_service()
     if supabase is not None:
-        return supabase.create_report(payload.model_dump(), reporter_id)
+        report = supabase.create_report(payload.model_dump(), reporter_id)
+        dispatch_pending_notifications()
+        return report
 
     if payload.listing_id is not None:
         _get_listing_or_404(payload.listing_id)
@@ -291,6 +295,18 @@ def create_report(payload: ReportCreate, authorization: str | None = Header(defa
         "updated_at": "2026-10-24T00:00:00Z",
     }
     REPORTS.insert(0, report)
+    # Memory-mode mirror of the migration 012 report trigger.
+    listing = next((item for item in LISTINGS if item["id"] == payload.listing_id), None)
+    MEMORY_NOTIFICATION_STORE.emit_to_moderators(
+        reporter_id, "report_new",
+        {
+            "actor_name": MEMORY_AUTH_STORE.get_display_name(reporter_id),
+            "listing_title": listing["title"] if listing else None,
+            "preview": payload.reason[:80],
+        },
+        listing_id=payload.listing_id,
+    )
+    dispatch_pending_notifications()
     return report
 
 @router.get("/reports")
@@ -349,7 +365,7 @@ def complete_transaction(
     """Sale: the buyer confirms receipt and the seller is paid. Exchange: completes once both parties confirm."""
     user_id = _require_auth(authorization)
     transaction = get_deal_store().confirm(transaction_id, user_id)
-    dispatch_pending_pushes()
+    dispatch_pending_notifications()
     return transaction
 
 
