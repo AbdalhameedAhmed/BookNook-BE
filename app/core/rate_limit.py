@@ -63,7 +63,11 @@ promo_check_by_user = RateLimiter(max_hits=20, window_seconds=10 * 60)
 # Per user: saving Web Push subscriptions (each browser normally subscribes once).
 push_subscribe_by_user = RateLimiter(max_hits=20, window_seconds=60 * 60)
 
+# Per user: settings changes. Email change also checks the password, so this slows guessing it.
+email_change_by_user = RateLimiter(max_hits=5, window_seconds=60 * 60)
+avatar_upload_by_user = RateLimiter(max_hits=20, window_seconds=60 * 60)
+
 ALL_LIMITERS = (
     login_by_email, email_send_by_email, auth_by_ip, topup_by_user, message_by_user, promo_check_by_user,
-    push_subscribe_by_user,
+    push_subscribe_by_user, email_change_by_user, avatar_upload_by_user,
 )

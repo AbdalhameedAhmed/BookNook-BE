@@ -14,7 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from api.deps import get_authenticated_user
 from core import rate_limit
 from core.auth_settings import EMAIL_CONFIRMATION_TTL, PASSWORD_RESET_TTL
-from core.email import send_confirmation_email, send_password_reset_email
+from core.email import send_confirmation_email, send_email_changed_notice, send_password_reset_email
 from core.security import (
     create_access_token,
     hash_one_time_token,
@@ -111,6 +111,23 @@ def reset_password(payload: ResetPasswordRequest, request: Request) -> SessionRe
     return _session_for(store, user)
 
 
+@router.post("/confirm-email-change", response_model=SessionResponse)
+def confirm_email_change(payload: TokenRequest, request: Request, background: BackgroundTasks) -> SessionResponse:
+    """Landing for the link mailed to the new address (see /me/email). Signs the user in on success."""
+    _limit(request, None)
+    store = get_auth_store()
+    result = store.confirm_email_change(hash_one_time_token(payload.token))
+    if not result:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_LINK)
+    if result.get("status") == "taken":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="That email is already used by another account")
+    background.add_task(send_email_changed_notice, result["old_email"], result["new_email"])
+    user = store.get_user(str(result["user_id"]))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_LINK)
+    return _session_for(store, user)
+
+
 @router.get("/me", response_model=AuthUser)
 def read_current_user(current_user: dict[str, object] = Depends(get_authenticated_user)) -> AuthUser:
     store = get_auth_store()
@@ -120,6 +137,7 @@ def read_current_user(current_user: dict[str, object] = Depends(get_authenticate
         email=str(current_user["email"]),
         display_name=store.get_display_name(user_id) or _fallback_name(str(current_user["email"])),
         role=current_user["role"],
+        avatar_url=store.get_avatar_url(user_id),
     )
 
 
@@ -134,6 +152,7 @@ def _session_for(store: Any, user: dict[str, Any]) -> SessionResponse:
             email=user["email"],
             display_name=store.get_display_name(user_id) or _fallback_name(user["email"]),
             role=user.get("role") or "user",
+            avatar_url=store.get_avatar_url(user_id),
         ),
     )
 

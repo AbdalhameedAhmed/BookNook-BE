@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import base64
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from functools import lru_cache
 from pathlib import Path
@@ -47,6 +47,25 @@ class SupabaseService:
         ).json()
         return rows[0]["display_name"] if rows else None
 
+    def get_avatar_url(self, user_id: str) -> str | None:
+        rows = self.rest(
+            "GET", "profiles", params={"select": "avatar_url", "id": f"eq.{user_id}", "limit": "1"}
+        ).json()
+        return rows[0].get("avatar_url") if rows else None
+
+    def set_avatar_url(self, user_id: str, url: str | None) -> None:
+        self.rest("PATCH", "profiles", params={"id": f"eq.{user_id}"},
+                  payload={"avatar_url": url, "updated_at": datetime.now(timezone.utc).isoformat()})
+
+    def request_email_change(self, user_id: str, new_email: str, token_hash: str, expires_at: datetime) -> None:
+        self.rpc("request_email_change", {
+            "p_user_id": user_id, "p_new_email": new_email, "p_token_hash": token_hash,
+            "p_expires_at": expires_at.isoformat(),
+        })
+
+    def confirm_email_change(self, token_hash: str) -> dict[str, Any] | None:
+        return self.rpc("confirm_email_change", {"p_token_hash": token_hash})
+
     def register_user(self, email: str, password_hash: str, display_name: str) -> dict[str, Any] | None:
         return self.rpc(
             "register_user",
@@ -71,8 +90,27 @@ class SupabaseService:
         return self.rpc("reset_user_password", {"p_token_hash": token_hash, "p_password_hash": password_hash})
 
     def upload_listing_image(self, seller_id: str, content: bytes, content_type: str) -> str:
+        return self._upload_image(f"{seller_id}/", content, content_type, "Book photo could not be uploaded")
+
+    def upload_avatar(self, user_id: str, content: bytes, content_type: str) -> str:
+        return self._upload_image(f"avatars/{user_id}/", content, content_type, "Profile photo could not be uploaded")
+
+    def delete_avatar_object(self, user_id: str, url: str) -> None:
+        """Best effort: removes an old profile photo from storage so its public URL stops working."""
+        prefix = f"{self.url}/storage/v1/object/public/book-images/"
+        if not url.startswith(f"{prefix}avatars/{user_id}/"):
+            return
+        headers = {"apikey": self.api_key}
+        if self.is_legacy_jwt_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        try:
+            httpx.delete(f"{self.url}/storage/v1/object/book-images/{url[len(prefix):]}", headers=headers, timeout=10)
+        except httpx.HTTPError:
+            pass
+
+    def _upload_image(self, folder: str, content: bytes, content_type: str, failure: str) -> str:
         extension = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[content_type]
-        path = f"{seller_id}/{uuid4()}.{extension}"
+        path = f"{folder}{uuid4()}.{extension}"
         headers = {
             "apikey": self.api_key,
             "Content-Type": content_type,
@@ -92,7 +130,7 @@ class SupabaseService:
             raise HTTPException(status_code=503, detail="Image storage service unavailable") from error
 
         if response.is_error:
-            raise HTTPException(status_code=502, detail="Book photo could not be uploaded")
+            raise HTTPException(status_code=502, detail=failure)
 
         return f"{self.url}/storage/v1/object/public/book-images/{quote(path, safe='/')}"
 

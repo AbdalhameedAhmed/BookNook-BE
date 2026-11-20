@@ -1,4 +1,4 @@
-"""Transactional email: account confirmation, password reset, and request updates.
+"""Transactional email: account confirmation, password reset, email change, and request updates.
 
 Each email is multipart: a plain-text body plus an HTML alternative rendered from
 ``email_templates/layout.html`` (the Stitch email design), with the app icon attached
@@ -76,6 +76,37 @@ RESET_COPY = EmailCopy(
     note_style="ochre",
 )
 
+
+EMAIL_CHANGE_COPY = EmailCopy(
+    preheader="Confirm the new email address for your Rfoof account.",
+    en_heading="Confirm your new email",
+    en_body=(
+        "You asked to use this address for your Rfoof account. Confirm it with the button below. "
+        "Until you do, your account keeps its current email. This link works for 24 hours."
+    ),
+    en_button="Use this email",
+    en_note="If you didn't ask for this, you can ignore this email.",
+    ar_heading="أكّد بريدك الجديد",
+    ar_body=(
+        "طلبت استخدام هذا العنوان لحسابك في رفوف. أكّده من الزر أدناه. "
+        "حتى تفعل ذلك يبقى بريد حسابك كما هو. الرابط صالح لمدة ٢٤ ساعة."
+    ),
+    ar_button="استخدام هذا البريد",
+    ar_note="إذا لم تطلب ذلك، يمكنك تجاهل هذه الرسالة.",
+)
+
+EMAIL_CHANGED_COPY = EmailCopy(
+    preheader="Your Rfoof account now uses a different email address.",
+    en_heading="Your email was changed",
+    en_body="Your Rfoof account now signs in with {new_email}. This address will no longer receive Rfoof emails.",
+    en_button="Open Rfoof",
+    en_note="If you didn't make this change, contact Rfoof right away.",
+    ar_heading="تم تغيير بريدك الإلكتروني",
+    ar_body="أصبح تسجيل الدخول إلى حسابك في رفوف بالبريد {new_email}. لن يستقبل هذا العنوان رسائل رفوف بعد الآن.",
+    ar_button="افتح رفوف",
+    ar_note="إذا لم تقم بهذا التغيير، تواصل مع رفوف فوراً.",
+    note_style="ochre",
+)
 
 NOTIFICATION_SMTP_TIMEOUT_SECONDS = 8
 
@@ -206,6 +237,53 @@ def send_notification_emails(emails: list[NotificationEmail]) -> None:
             print(f"\n[dev email] To: {message['To']}\nSubject: {message['Subject']}\n\n{body}", flush=True)
         return
     _deliver([message for message, _ in built], NOTIFICATION_SMTP_TIMEOUT_SECONDS, "Notification")
+
+
+def send_email_change_email(new_address: str, raw_token: str) -> None:
+    link = f"{get_auth_settings().frontend_url}/confirm-email-change#token={raw_token}"
+    _send(
+        new_address,
+        "Confirm your new Rfoof email | تأكيد بريدك الجديد في رفوف",
+        EMAIL_CHANGE_COPY,
+        link,
+        "You asked to use this address for your Rfoof account.\n\n"
+        f"Confirm it by opening this link (valid for 24 hours):\n{link}\n\n"
+        "Until you do, your account keeps its current email. If you didn't ask for this, ignore this email.\n\n"
+        "---\n\n"
+        "طلبت استخدام هذا العنوان لحسابك في رفوف.\n\n"
+        f"أكّده بفتح هذا الرابط (صالح لمدة ٢٤ ساعة):\n{link}\n\n"
+        "حتى تفعل ذلك يبقى بريد حسابك كما هو. إذا لم تطلب ذلك، تجاهل هذه الرسالة.\n",
+    )
+
+
+def mask_email(address: str) -> str:
+    """r***@gmail.com: enough for the owner to recognise, not enough to harvest."""
+    local, _, domain = address.partition("@")
+    return f"{local[:1]}***@{domain}"
+
+
+def send_email_changed_notice(old_address: str, new_address: str) -> None:
+    """Security notice to the previous address after an email change."""
+    masked = mask_email(new_address)
+    copy = EmailCopy(**{
+        **EMAIL_CHANGED_COPY.__dict__,
+        "en_body": EMAIL_CHANGED_COPY.en_body.format(new_email=masked),
+        "ar_body": EMAIL_CHANGED_COPY.ar_body.format(new_email=masked),
+    })
+    link = f"{get_auth_settings().frontend_url}/signin"
+    _send(
+        old_address,
+        "Your Rfoof email was changed | تم تغيير بريدك في رفوف",
+        copy,
+        link,
+        f"Your Rfoof account now signs in with {masked}.\n"
+        "This address will no longer receive Rfoof emails.\n\n"
+        "If you didn't make this change, contact Rfoof right away.\n\n"
+        "---\n\n"
+        f"أصبح تسجيل الدخول إلى حسابك في رفوف بالبريد {masked}.\n"
+        "لن يستقبل هذا العنوان رسائل رفوف بعد الآن.\n\n"
+        "إذا لم تقم بهذا التغيير، تواصل مع رفوف فوراً.\n",
+    )
 
 
 def build_message(to_address: str, subject: str, body: str, copy: EmailCopy, link: str, sender: str) -> EmailMessage:

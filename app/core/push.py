@@ -103,7 +103,7 @@ def push_enabled() -> bool:
 
 
 def link_for(kind: str) -> str:
-    return LINKS.get(kind, "/account/notifications")
+    return LINKS.get(kind, "/notifications")
 
 
 def build_payload(notification: dict[str, Any], lang: str) -> dict[str, Any]:

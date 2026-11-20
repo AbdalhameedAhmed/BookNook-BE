@@ -51,6 +51,13 @@ class EmailRequest(BaseModel):
     _email = field_validator("email")(_normalize_email)
 
 
+class EmailChangeRequest(BaseModel):
+    new_email: EmailStr
+    current_password: str = Field(..., min_length=1, max_length=200)
+
+    _email = field_validator("new_email")(_normalize_email)
+
+
 class TokenRequest(BaseModel):
     token: str = Field(..., min_length=20, max_length=200)
 
@@ -66,6 +73,7 @@ class AuthUser(BaseModel):
     email: str
     display_name: str
     role: Literal["user", "moderator"]
+    avatar_url: str | None = None
 
 
 class SessionResponse(BaseModel):
