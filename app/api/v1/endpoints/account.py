@@ -1,4 +1,7 @@
-"""Account settings for the signed-in user: profile photo, email change, taken tours. See docs/settings.md."""
+"""Account settings for the signed-in user: profile photo, email change, taken tours, invite link.
+
+See docs/settings.md and docs/referrals.md.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +17,7 @@ from core.config import IMAGE_SIGNATURES, MAX_BOOK_IMAGE_SIZE_BYTES
 from core.email import send_email_change_email
 from core.security import new_one_time_token, verify_password
 from core.supabase import get_supabase_service
+from crud.crud_referrals import get_referral_store
 from crud.crud_user import get_auth_store
 from schemas.auth import EmailChangeRequest, MessageResponse
 
@@ -92,3 +96,9 @@ def request_email_change(
         background.add_task(send_email_change_email, payload.new_email, raw_token)
     return MessageResponse(message=CHECK_NEW_INBOX)
 
+
+
+@router.get("/invite")
+def get_invite(user_id: CurrentUserId) -> dict[str, object]:
+    """The user's invite code and free-request counts (see docs/referrals.md). Friends are not named."""
+    return get_referral_store().summary(user_id)

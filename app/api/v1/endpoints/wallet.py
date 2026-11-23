@@ -19,6 +19,7 @@ from core.config import (
 )
 from core.push import dispatch_pending_notifications
 from core.rate_limit import topup_by_user
+from crud.crud_referrals import get_referral_store
 from crud.crud_wallet import charging_options, ewallet_recipient_number, get_wallet_store
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
@@ -42,6 +43,8 @@ def get_wallet(user_id: CurrentUserId) -> dict[str, object]:
         "entries": summary["entries"],
         "options": charging_options(),
         "platform_fee_egp": platform_fee_egp(),
+        # Fees that will be waived automatically (earned by inviting friends; see docs/referrals.md).
+        "free_requests_available": get_referral_store().available(user_id),
         "topups": [_owner_view(row) for row in store.list_topups(user_id=user_id)],
     }
 

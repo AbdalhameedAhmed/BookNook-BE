@@ -8,6 +8,7 @@ from crud.crud_deals import MEMORY_DEAL_STORE
 from crud.crud_item import reset_memory_data
 from crud.crud_notifications import MEMORY_NOTIFICATION_STORE
 from crud.crud_promos import MEMORY_PROMO_STORE
+from crud.crud_referrals import MEMORY_REFERRAL_STORE
 from crud.crud_wallet import MEMORY_WALLET_STORE
 from supabase_service import get_supabase_service
 
@@ -24,6 +25,7 @@ def use_memory_storage_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     MEMORY_DEAL_STORE.reset()
     reset_memory_data()
     MEMORY_PROMO_STORE.reset()
+    MEMORY_REFERRAL_STORE.reset()
     MEMORY_NOTIFICATION_STORE.reset()
     monkeypatch.delenv("VAPID_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("VAPID_PRIVATE_KEY", raising=False)

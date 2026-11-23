@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from core.supabase import get_supabase_service
+from crud.crud_referrals import MEMORY_REFERRAL_STORE
 
 
 class MemoryAuthStore:
@@ -66,7 +67,8 @@ class MemoryAuthStore:
             else:
                 self.avatar_urls.pop(user_id, None)
 
-    def register_user(self, email: str, password_hash: str, display_name: str) -> dict[str, Any] | None:
+    def register_user(self, email: str, password_hash: str, display_name: str,
+                      invite_code: str | None = None) -> dict[str, Any] | None:
         with self._lock:
             if any(user["email"] == email for user in self.users.values()):
                 return None
@@ -80,6 +82,7 @@ class MemoryAuthStore:
                 "password_changed_at": _now(),
             }
             self.display_names[user_id] = display_name
+            MEMORY_REFERRAL_STORE.record_signup(user_id, invite_code)
             return dict(self.users[user_id])
 
     def issue_auth_token(self, user_id: str, purpose: str, token_hash: str, expires_at: datetime) -> None:

@@ -22,6 +22,7 @@ from core.security import (
     new_one_time_token,
     verify_password,
 )
+from crud.crud_referrals import normalize_invite_code
 from crud.crud_user import get_auth_store
 from schemas.auth import (
     AuthUser,
@@ -45,7 +46,8 @@ def sign_up(payload: SignUpRequest, request: Request, background: BackgroundTask
     _limit(request, payload.email, rate_limit.email_send_by_email)
     store = get_auth_store()
     password_hash = hash_password(payload.password)
-    user = store.register_user(payload.email, password_hash, payload.display_name)
+    user = store.register_user(payload.email, password_hash, payload.display_name,
+                               normalize_invite_code(payload.invite_code))
     if user is None:
         # Already registered: help an unconfirmed owner finish sign-up, otherwise say nothing.
         user = store.find_user_by_email(payload.email)

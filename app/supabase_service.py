@@ -82,10 +82,12 @@ class SupabaseService:
     def confirm_email_change(self, token_hash: str) -> dict[str, Any] | None:
         return self.rpc("confirm_email_change", {"p_token_hash": token_hash})
 
-    def register_user(self, email: str, password_hash: str, display_name: str) -> dict[str, Any] | None:
+    def register_user(self, email: str, password_hash: str, display_name: str,
+                      invite_code: str | None = None) -> dict[str, Any] | None:
         return self.rpc(
             "register_user",
-            {"p_email": email, "p_password_hash": password_hash, "p_display_name": display_name},
+            {"p_email": email, "p_password_hash": password_hash, "p_display_name": display_name,
+             "p_invite_code": invite_code},
         )
 
     def issue_auth_token(self, user_id: str, purpose: str, token_hash: str, expires_at: datetime) -> None:

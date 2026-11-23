@@ -25,6 +25,8 @@ class SignUpRequest(BaseModel):
     email: EmailStr
     password: str
     display_name: str = Field(..., min_length=1, max_length=80)
+    # From an invite link (/signin?invite=CODE). Unknown or malformed codes are ignored.
+    invite_code: str | None = Field(default=None, max_length=32)
 
     _email = field_validator("email")(_normalize_email)
     _password = field_validator("password")(_validate_new_password)

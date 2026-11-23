@@ -18,6 +18,7 @@ from core.supabase import get_supabase_service
 from crud.crud_item import LISTINGS, REQUESTS, TRANSACTIONS, _get_listing_or_404
 from crud.crud_notifications import MEMORY_NOTIFICATION_STORE, message_preview
 from crud.crud_promos import MEMORY_PROMO_STORE
+from crud.crud_referrals import MEMORY_REFERRAL_STORE
 from crud.crud_user import MEMORY_AUTH_STORE
 from crud.crud_wallet import INSUFFICIENT_FUNDS, MEMORY_WALLET_STORE
 
@@ -134,6 +135,10 @@ class MemoryDealStore:
                 price, request_fee = int(listing["price_egp"] or 0), fee
 
             promo, discount = (MEMORY_PROMO_STORE.discount_for(promo_code, request_fee) if promo_code else (None, 0))
+            # No promo code: a free request earned by inviting a friend waives the whole fee.
+            free_request = not promo_code and request_fee > 0 and MEMORY_REFERRAL_STORE.available(buyer_id) > 0
+            if free_request:
+                discount = request_fee
             request_fee -= discount
             held = price + request_fee
             if self.wallet.get_balance(buyer_id) < held:
@@ -150,9 +155,11 @@ class MemoryDealStore:
             REQUESTS.insert(0, request)
             if promo:
                 MEMORY_PROMO_STORE.record(promo, buyer_id, request["id"], "buyer", discount)
+            if free_request:
+                MEMORY_REFERRAL_STORE.use_credit(buyer_id, request["id"], "buyer")
             self.wallet.adjust(buyer_id, -held, "hold", request_id=request["id"])
             _notify(listing["seller_id"], "request_new", listing, actor_id=buyer_id, request_id=request["id"])
-            return _public_request(request)
+            return {**_public_request(request), "free_request_used": free_request}
 
     def update_request(self, request_id: str, actor_id: str, next_status: str,
                        chosen_listing_id: str | None, fee: int, promo_code: str | None = None) -> dict[str, Any]:
@@ -193,6 +200,9 @@ class MemoryDealStore:
             elif kind == "sale":
                 seller_fee = min(fee, int(request.get("price_egp") or 0))
             promo, seller_discount = (MEMORY_PROMO_STORE.discount_for(promo_code, seller_fee) if promo_code else (None, 0))
+            free_request = not promo_code and seller_fee > 0 and MEMORY_REFERRAL_STORE.available(actor_id) > 0
+            if free_request:
+                seller_discount = seller_fee
             seller_fee -= seller_discount
             if kind == "exchange" and self.wallet.get_balance(actor_id) < seller_fee:
                 raise HTTPException(status_code=402, detail=INSUFFICIENT_FUNDS)
@@ -216,6 +226,8 @@ class MemoryDealStore:
             TRANSACTIONS.insert(0, transaction)
             if promo:
                 MEMORY_PROMO_STORE.record(promo, actor_id, request["id"], "seller", seller_discount)
+            if free_request:
+                MEMORY_REFERRAL_STORE.use_credit(actor_id, request["id"], "seller")
 
             reserved_ids = {listing["id"]} | ({chosen["id"]} if chosen else set())
             for item in LISTINGS:
@@ -227,7 +239,7 @@ class MemoryDealStore:
 
             request.update(status="accepted", held_egp=0, updated_at=now)
             _notify(request["buyer_id"], "request_accepted", listing, actor_id=actor_id, request_id=request["id"])
-            return _public_request(request)
+            return {**_public_request(request), "free_request_used": free_request}
 
     # --- Handover ---
 
@@ -278,6 +290,10 @@ class MemoryDealStore:
                 for party in (transaction["buyer_id"], transaction["seller_id"]):
                     if kind == "free" or party != actor_id:
                         _notify(party, "deal_completed", listing, transaction=transaction)
+            inviter_id = MEMORY_REFERRAL_STORE.reward_for(transaction)
+            if inviter_id:
+                MEMORY_NOTIFICATION_STORE.emit(inviter_id, "referral_reward",
+                                               {"actor_name": _display_name(transaction["buyer_id"])})
             return dict(transaction)
 
     def cancel(self, transaction_id: str) -> dict[str, Any]:
@@ -289,6 +305,7 @@ class MemoryDealStore:
             self.wallet.adjust(transaction["buyer_id"], transaction.get("buyer_held_egp", 0), "refund", **ids)
             self.wallet.adjust(transaction["seller_id"], transaction.get("seller_held_egp", 0), "refund", **ids)
             MEMORY_PROMO_STORE.release(transaction["request_id"])
+            MEMORY_REFERRAL_STORE.release(transaction["request_id"])
             for item in LISTINGS:
                 if item["id"] in {transaction["listing_id"], transaction.get("offered_listing_id")} and item["status"] == "reserved":
                     item["status"] = "active"
@@ -374,6 +391,7 @@ class MemoryDealStore:
         held = int(request.get("held_egp") or 0)
         self.wallet.adjust(request["buyer_id"], held, "refund", request_id=request["id"])
         MEMORY_PROMO_STORE.release(request["id"])
+        MEMORY_REFERRAL_STORE.release(request["id"])
         request.update(status=next_status, held_egp=0, updated_at=_now())
         listing = _get_listing_or_404(request["listing_id"])
         if next_status == "cancelled":

@@ -47,6 +47,7 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
         "topup_submitted": ("Top-up to review", "{actor} sent a top-up of {amount} EGP for review."),
         "report_new": ("New report", "{actor} reported “{title}”: {preview}"),
         "report_user": ("New report", "{actor} reported a user: {preview}"),
+        "referral_reward": ("You earned a free request", "{actor} joined from your invite and completed a deal. Your next Rfoof fee is on us."),
     },
     "ar": {
         "request_new": ("طلب جديد", "{actor} يريد «{title}»"),
@@ -63,6 +64,7 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
         "topup_submitted": ("شحن بانتظار المراجعة", "أرسل {actor} طلب شحن بقيمة {amount} ج.م للمراجعة."),
         "report_new": ("بلاغ جديد", "أبلغ {actor} عن «{title}»: {preview}"),
         "report_user": ("بلاغ جديد", "أبلغ {actor} عن مستخدم: {preview}"),
+        "referral_reward": ("ربحت طلبًا مجانيًا", "انضم {actor} من دعوتك وأتمّ صفقة. رسوم رفوف القادمة علينا."),
     },
 }
 MONEY_SUFFIX = {
@@ -85,6 +87,7 @@ LINKS = {
     "topup_rejected": "/account/wallet",
     "topup_submitted": "/admin/topups",
     "report_new": "/admin",
+    "referral_reward": "/account/invite",
 }
 
 # Only request updates are emailed (plus the auth emails in core/email.py).
