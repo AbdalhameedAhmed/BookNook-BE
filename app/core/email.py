@@ -46,7 +46,7 @@ class EmailCopy:
 
 
 CONFIRM_COPY = EmailCopy(
-    preheader="One click to start sharing books in Fayoum.",
+    preheader="One click to start sharing books across Egypt.",
     en_heading="Welcome to Rfoof",
     en_body="Confirm your email address to finish creating your account. This link works for 24 hours.",
     en_button="Confirm my email",

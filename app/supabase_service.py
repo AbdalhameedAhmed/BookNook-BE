@@ -243,6 +243,7 @@ class SupabaseService:
         listing_type: str | None,
         condition: str | None,
         page: int,
+        governorate: str | None = None,
         page_size: int,
         seller_id: str | None = None,
         sort: str = "newest",
@@ -263,6 +264,8 @@ class SupabaseService:
             params["listing_type"] = f"eq.{listing_type}"
         if condition:
             params["condition"] = f"eq.{condition}"
+        if governorate:
+            params["governorate"] = f"eq.{governorate}"
         if seller_id:
             params["seller_id"] = f"eq.{seller_id}"
 

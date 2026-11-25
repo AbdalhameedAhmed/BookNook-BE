@@ -12,6 +12,7 @@ class ListingCreate(BaseModel):
     condition: str
     listing_type: Literal["sale", "exchange", "free"]
     price_egp: int | None = None
+    governorate: str
     area: str = Field(..., min_length=2)
     meetup_preference: Literal["direct_meetup", "pickup_point", "either"] = "direct_meetup"
     images: list[str] = Field(default_factory=list)
@@ -23,6 +24,7 @@ class ListingUpdate(BaseModel):
     condition: str | None = None
     listing_type: Literal["sale", "exchange", "free"] | None = None
     price_egp: int | None = None
+    governorate: str | None = None
     area: str | None = None
     meetup_preference: Literal["direct_meetup", "pickup_point", "either"] | None = None
     status: str | None = None
@@ -37,6 +39,7 @@ class Listing(BaseModel):
     listing_type: str
     price_egp: int | None = None
     status: str
+    governorate: str | None = None
     area: str
     meetup_preference: str
     seller_id: str

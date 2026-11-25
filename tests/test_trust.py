@@ -31,6 +31,7 @@ def test_transaction_can_be_completed_by_parties() -> None:
             "condition": "good",
             "listing_type": "sale",
             "price_egp": 180,
+            "governorate": "fayoum",
             "area": "Fayoum Center",
             "meetup_preference": "direct_meetup",
         },

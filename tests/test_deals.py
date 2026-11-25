@@ -31,7 +31,7 @@ class User:
     def list_book(self, listing_type: str = "sale", price: int | None = 100) -> str:
         response = client.post("/api/v1/listings", headers=self.headers, json={
             "title": f"{listing_type} book", "condition": "good", "listing_type": listing_type,
-            "price_egp": price if listing_type == "sale" else None, "area": "Fayoum Center",
+            "price_egp": price if listing_type == "sale" else None, "governorate": "fayoum", "area": "Fayoum Center",
         })
         assert response.status_code == 201, response.text
         return response.json()["id"]

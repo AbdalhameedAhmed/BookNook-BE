@@ -84,7 +84,7 @@ def test_login_returns_token_that_authorizes_private_endpoints(outbox) -> None:
     created = client.post(
         "/api/v1/listings",
         headers=bearer(token),
-        json={"title": "Backend Auth Book", "condition": "good", "listing_type": "free", "area": "Fayoum Center"},
+        json={"title": "Backend Auth Book", "condition": "good", "listing_type": "free", "governorate": "fayoum", "area": "Fayoum Center"},
     )
     assert created.status_code == 201
     assert created.json()["seller_id"] == me.json()["id"]

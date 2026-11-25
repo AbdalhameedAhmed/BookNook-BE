@@ -15,6 +15,7 @@ from core.config import (
     IMAGE_SIGNATURES,
     MAX_BOOK_IMAGE_SIZE_BYTES,
     VALID_CONDITIONS,
+    VALID_GOVERNORATES,
     platform_fee_egp,
 )
 from core.push import dispatch_pending_notifications
@@ -35,11 +36,17 @@ from schemas.items import ListingCreate, ListingUpdate, ReportCreate, RequestCre
 
 router = APIRouter()
 
+def _check_governorate(governorate: str | None) -> None:
+    if governorate is not None and governorate not in VALID_GOVERNORATES:
+        raise HTTPException(status_code=400, detail="governorate must be one of Egypt's governorates")
+
+
 @router.get("/listings")
 def get_listings(
     q: str | None = None,
     listing_type: str | None = None,
     condition: str | None = None,
+    governorate: str | None = None,
     page: int = 1,
     page_size: int = 12,
     seller_id: str | None = Query(default=None, max_length=64),
@@ -50,6 +57,7 @@ def get_listings(
         raise HTTPException(status_code=400, detail="page must be at least 1")
     if page_size < 1:
         raise HTTPException(status_code=400, detail="page_size must be at least 1")
+    _check_governorate(governorate)
 
     supabase = get_supabase_service()
 
@@ -58,6 +66,7 @@ def get_listings(
             query=q,
             listing_type=listing_type,
             condition=condition,
+            governorate=governorate,
             page=page,
             page_size=page_size,
             seller_id=seller_id,
@@ -83,6 +92,9 @@ def get_listings(
 
     if condition:
         items = [item for item in items if item.condition == condition]
+
+    if governorate:
+        items = [item for item in items if item.governorate == governorate]
 
     total = len(items)
     start = (page - 1) * page_size
@@ -132,6 +144,8 @@ def create_listing(payload: ListingCreate, authorization: str | None = Header(de
     if payload.condition not in VALID_CONDITIONS:
         raise HTTPException(status_code=400, detail="condition must be one of: like_new, good, acceptable, heavily_used")
 
+    _check_governorate(payload.governorate)
+
     if payload.listing_type == "sale":
         if payload.price_egp is None or payload.price_egp < 0:
             raise HTTPException(status_code=400, detail="price_egp is required and must be non-negative for sale listings")
@@ -152,6 +166,7 @@ def create_listing(payload: ListingCreate, authorization: str | None = Header(de
         "listing_type": payload.listing_type,
         "price_egp": payload.price_egp,
         "status": "active",
+        "governorate": payload.governorate,
         "area": payload.area,
         "meetup_preference": payload.meetup_preference,
         "seller_id": user_id,
@@ -169,6 +184,10 @@ def update_listing(
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
     user_id = _require_auth(authorization)
+    if "governorate" in payload.model_fields_set:
+        if payload.governorate is None:
+            raise HTTPException(status_code=400, detail="governorate can't be removed from a listing")
+        _check_governorate(payload.governorate)
     supabase = get_supabase_service()
     if supabase is not None:
         update_data = payload.model_dump(exclude_unset=True, exclude={"status"})

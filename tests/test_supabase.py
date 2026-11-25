@@ -75,6 +75,7 @@ def test_supabase_auth_identity_is_used_to_create_listing(monkeypatch: pytest.Mo
             "condition": "good",
             "listing_type": "sale",
             "price_egp": 125,
+            "governorate": "fayoum",
             "area": "Fayoum Center",
         },
     )
@@ -127,6 +128,7 @@ def test_supabase_mode_does_not_accept_demo_tokens(monkeypatch: pytest.MonkeyPat
             "condition": "good",
             "listing_type": "sale",
             "price_egp": 125,
+            "governorate": "fayoum",
             "area": "Fayoum Center",
         },
     )

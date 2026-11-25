@@ -3,6 +3,13 @@ from __future__ import annotations
 import os
 
 VALID_CONDITIONS = {"like_new", "good", "acceptable", "heavily_used"}
+# Egypt's 27 governorates (codes match the listings_governorate_check constraint, migration 020).
+VALID_GOVERNORATES = {
+    "cairo", "giza", "alexandria", "qalyubia", "sharqia", "dakahlia", "gharbia",
+    "monufia", "kafr_el_sheikh", "beheira", "damietta", "port_said", "ismailia",
+    "suez", "north_sinai", "south_sinai", "red_sea", "fayoum", "beni_suef", "minya",
+    "asyut", "sohag", "qena", "luxor", "aswan", "new_valley", "matrouh",
+}
 DEMO_USERS = {"demo-user-1", "demo-user-2"}
 MAX_BOOK_IMAGE_SIZE_BYTES = 2 * 1024 * 1024
 
