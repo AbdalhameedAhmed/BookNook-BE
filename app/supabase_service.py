@@ -217,6 +217,7 @@ class SupabaseService:
                 "unsupported_listing_status": (400, "Unsupported listing status"),
                 "promo_invalid": (400, "This promo code isn't valid"),
                 "promo_exhausted": (409, "This promo code has been fully used"),
+                "promo_used_by_you": (409, "You've already used this promo code as many times as it allows"),
                 "promo_not_applicable": (400, "Promo codes only apply to sale and exchange fees"),
                 "promo_code_taken": (409, "A promo code with this name already exists"),
             }

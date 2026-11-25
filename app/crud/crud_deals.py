@@ -134,7 +134,7 @@ class MemoryDealStore:
             elif kind == "sale":
                 price, request_fee = int(listing["price_egp"] or 0), fee
 
-            promo, discount = (MEMORY_PROMO_STORE.discount_for(promo_code, request_fee) if promo_code else (None, 0))
+            promo, discount = (MEMORY_PROMO_STORE.discount_for(promo_code, request_fee, buyer_id) if promo_code else (None, 0))
             # No promo code: a free request earned by inviting a friend waives the whole fee.
             free_request = not promo_code and request_fee > 0 and MEMORY_REFERRAL_STORE.available(buyer_id) > 0
             if free_request:
@@ -199,7 +199,7 @@ class MemoryDealStore:
                 seller_fee = fee
             elif kind == "sale":
                 seller_fee = min(fee, int(request.get("price_egp") or 0))
-            promo, seller_discount = (MEMORY_PROMO_STORE.discount_for(promo_code, seller_fee) if promo_code else (None, 0))
+            promo, seller_discount = (MEMORY_PROMO_STORE.discount_for(promo_code, seller_fee, actor_id) if promo_code else (None, 0))
             free_request = not promo_code and seller_fee > 0 and MEMORY_REFERRAL_STORE.available(actor_id) > 0
             if free_request:
                 seller_discount = seller_fee

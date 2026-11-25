@@ -86,7 +86,9 @@ def list_promo_codes() -> dict[str, object]:
 
 @router.post("/promo-codes", status_code=status.HTTP_201_CREATED)
 def create_promo_code(payload: PromoCreate, moderator: Moderator) -> dict[str, object]:
-    return get_promo_store().create(payload.code.strip(), payload.discount_egp, payload.max_uses, str(moderator["id"]))
+    return get_promo_store().create(
+        payload.code.strip(), payload.discount_egp, payload.max_uses, str(moderator["id"]), payload.max_uses_per_user
+    )
 
 
 @router.patch("/promo-codes/{promo_id}")

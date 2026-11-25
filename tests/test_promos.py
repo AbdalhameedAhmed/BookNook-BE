@@ -17,9 +17,10 @@ def mod() -> User:
     return User("mod@x.test", role="moderator")
 
 
-def create_code(mod: User, code: str = "WELCOME5", discount: int = 5, max_uses: int = 2):
+def create_code(mod: User, code: str = "WELCOME5", discount: int = 5, max_uses: int = 2,
+                per_user: int | None = None):
     return client.post("/api/v1/admin/promo-codes", headers=mod.headers,
-                       json={"code": code, "discount_egp": discount, "max_uses": max_uses})
+                       json={"code": code, "discount_egp": discount, "max_uses": max_uses, "max_uses_per_user": per_user})
 
 
 def uses(mod: User, code: str) -> int:
@@ -51,6 +52,7 @@ def test_only_moderators_manage_promo_codes(mod) -> None:
     {"code": "has space", "discount_egp": 5, "max_uses": 1},
     {"code": "GOOD", "discount_egp": 0, "max_uses": 1},
     {"code": "GOOD", "discount_egp": 5, "max_uses": 0},
+    {"code": "GOOD", "discount_egp": 5, "max_uses": 5, "max_uses_per_user": 0},
 ])
 def test_invalid_promo_codes_are_rejected(mod, body) -> None:
     assert client.post("/api/v1/admin/promo-codes", headers=mod.headers, json=body).status_code == 422
@@ -68,7 +70,9 @@ def test_check_previews_without_using_the_code(mod) -> None:
     user = User("u@x.test")
 
     assert client.get("/api/v1/promo-codes/welcome5").status_code == 401
-    assert client.get("/api/v1/promo-codes/welcome5", headers=user.headers).json() == {"code": "WELCOME5", "discount_egp": 5}
+    assert client.get("/api/v1/promo-codes/welcome5", headers=user.headers).json() == {
+        "code": "WELCOME5", "discount_egp": 5, "uses_left_for_you": None,
+    }
     assert client.get("/api/v1/promo-codes/NOPE", headers=user.headers).status_code == 400
     assert uses(mod, "WELCOME5") == 0
 
@@ -143,3 +147,44 @@ def test_exchange_codes_and_moderator_cancel_release_both_uses(mod) -> None:
     tid = owner.transaction_for(wanted)["id"]
     client.post(f"/api/v1/admin/transactions/{tid}/cancel", headers=mod.headers)
     assert uses(mod, "SWAP") == 0
+
+
+# --- Per-person limit (migration 017; the business-card code RFOOF2026 is 2 per person) ---
+
+def test_per_person_limit_waives_the_whole_fee_on_two_books_per_person(mod) -> None:
+    created = create_code(mod, "RFOOF2026", 10_000, max_uses=100, per_user=2)
+    assert created.json()["max_uses_per_user"] == 2
+    seller = User("seller@x.test")
+    reader, friend = User("reader@x.test", balance=500), User("friend@x.test", balance=500)
+    books = [seller.list_book(price=20) for _ in range(4)]
+
+    preview = client.get("/api/v1/promo-codes/rfoof2026", headers=reader.headers).json()
+    assert preview["uses_left_for_you"] == 2
+    for book in books[:2]:
+        request = request_with_code(reader, book, "rfoof2026")
+        assert request.status_code == 201
+        assert (request.json()["fee_egp"], request.json()["held_egp"]) == (0, 20), "whole fee waived, book price still paid"
+
+    assert request_with_code(reader, books[2], "RFOOF2026").status_code == 409
+    assert client.get("/api/v1/promo-codes/RFOOF2026", headers=reader.headers).status_code == 409
+    assert reader.balance == 460
+    assert request_with_code(friend, books[2], "RFOOF2026").status_code == 201, "the limit is per person"
+
+
+def test_per_person_limit_counts_seller_side_uses_and_refunds_give_them_back(mod) -> None:
+    create_code(mod, "ONCE", 10_000, max_uses=100, per_user=1)
+    owner, requester, other = User("owner@x.test"), User("req@x.test", balance=500), User("other@x.test", balance=500)
+    wanted, offer = owner.list_book("exchange"), requester.list_book("exchange")
+    sale = owner.list_book(price=20)
+    other_book = other.list_book(price=20)
+
+    request = request_with_code(requester, wanted, "ONCE", [offer]).json()["id"]
+    accept = client.patch(f"/api/v1/requests/{request}", headers=owner.headers,
+                          json={"status": "accepted", "chosen_listing_id": offer, "promo_code": "ONCE"})
+    assert accept.status_code == 200
+    assert request_with_code(owner, other_book, "ONCE").status_code == 409, "accepting used the owner's one use"
+
+    blocked = request_with_code(other, sale, "ONCE")
+    assert blocked.status_code == 201
+    client.patch(f"/api/v1/requests/{blocked.json()['id']}", headers=owner.headers, json={"status": "rejected"})
+    assert request_with_code(other, sale, "ONCE").status_code == 201, "a rejected request gives the use back"

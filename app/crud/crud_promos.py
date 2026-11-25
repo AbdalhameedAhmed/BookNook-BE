@@ -1,7 +1,8 @@
 """Promo codes: a fixed EGP discount on the platform fee (see migration 009 and docs/wallet.md).
 
-``max_uses`` is the number of book deals a code can be used on, across all users. A use
-is released (given back) when its request is refunded or its handover is cancelled.
+``max_uses`` is the number of book deals a code can be used on, across all users, and the optional
+``max_uses_per_user`` (migration 017) caps how many of those one person can use. A use is released
+(given back) when its request is refunded or its handover is cancelled.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from core.supabase import get_supabase_service
 
 PROMO_INVALID = "This promo code isn't valid"
 PROMO_EXHAUSTED = "This promo code has been fully used"
+PROMO_USED_BY_YOU = "You've already used this promo code as many times as it allows"
 PROMO_NOT_APPLICABLE = "Promo codes only apply to sale and exchange fees"
 PROMO_TAKEN = "A promo code with this name already exists"
 
@@ -28,12 +30,14 @@ class SupabasePromoStore:
     def __init__(self, service: Any) -> None:
         self.service = service
 
-    def check(self, code: str) -> dict[str, Any]:
-        return self.service.rpc("check_promo_code", {"p_code": code})
+    def check(self, code: str, user_id: str) -> dict[str, Any]:
+        return self.service.rpc("check_promo_code", {"p_code": code, "p_user_id": user_id})
 
-    def create(self, code: str, discount_egp: int, max_uses: int, created_by: str) -> dict[str, Any]:
+    def create(self, code: str, discount_egp: int, max_uses: int, created_by: str,
+               max_uses_per_user: int | None = None) -> dict[str, Any]:
         return self.service.rpc("create_promo_code", {
             "p_code": code, "p_discount": discount_egp, "p_max_uses": max_uses, "p_created_by": created_by,
+            "p_max_uses_per_user": max_uses_per_user,
         })
 
     def list(self) -> list[dict[str, Any]]:
@@ -54,7 +58,7 @@ class SupabasePromoStore:
 
 
 class MemoryPromoStore:
-    """Demo/test-only mirror of the migration 009 promo functions."""
+    """Demo/test-only mirror of the migration 009 and 017 promo functions."""
 
     def __init__(self) -> None:
         self.reset()
@@ -65,11 +69,12 @@ class MemoryPromoStore:
 
     # --- Used by the memory deal store ---
 
-    def discount_for(self, code: str, fee: int) -> tuple[dict[str, Any], int]:
-        """Validates a code for a fee without recording a use. Returns (promo, discount)."""
+    def discount_for(self, code: str, fee: int, user_id: str) -> tuple[dict[str, Any], int]:
+        """Validates a code for a fee and user without recording a use. Returns (promo, discount)."""
         if fee <= 0:
             raise HTTPException(status_code=400, detail=PROMO_NOT_APPLICABLE)
         promo = self._usable(code)
+        self._uses_left_for(promo, user_id)
         return promo, min(promo["discount_egp"], fee)
 
     def record(self, promo: dict[str, Any], user_id: str, request_id: str, party: str, discount: int) -> None:
@@ -85,18 +90,20 @@ class MemoryPromoStore:
 
     # --- API ---
 
-    def check(self, code: str) -> dict[str, Any]:
+    def check(self, code: str, user_id: str) -> dict[str, Any]:
         promo = self._usable(code)
-        return {"code": promo["code"], "discount_egp": promo["discount_egp"]}
+        uses_left = self._uses_left_for(promo, user_id)
+        return {"code": promo["code"], "discount_egp": promo["discount_egp"], "uses_left_for_you": uses_left}
 
-    def create(self, code: str, discount_egp: int, max_uses: int, created_by: str) -> dict[str, Any]:
+    def create(self, code: str, discount_egp: int, max_uses: int, created_by: str,
+               max_uses_per_user: int | None = None) -> dict[str, Any]:
         normalized = normalize_code(code)
         if any(p["code"] == normalized for p in self.codes.values()):
             raise HTTPException(status_code=409, detail=PROMO_TAKEN)
         now = _now()
         promo = {
             "id": str(uuid4()), "code": normalized, "discount_egp": discount_egp, "max_uses": max_uses,
-            "active": True, "created_by": created_by, "created_at": now, "updated_at": now,
+            "max_uses_per_user": max_uses_per_user, "active": True, "created_by": created_by, "created_at": now, "updated_at": now,
         }
         self.codes[promo["id"]] = promo
         return self._view(promo)
@@ -119,6 +126,16 @@ class MemoryPromoStore:
         if self._uses(promo["id"]) >= promo["max_uses"]:
             raise HTTPException(status_code=409, detail=PROMO_EXHAUSTED)
         return promo
+
+    def _uses_left_for(self, promo: dict[str, Any], user_id: str) -> int | None:
+        limit = promo.get("max_uses_per_user")
+        if limit is None:
+            return None
+        used = sum(1 for r in self.redemptions
+                   if r["promo_code_id"] == promo["id"] and r["user_id"] == user_id and r["released_at"] is None)
+        if used >= limit:
+            raise HTTPException(status_code=409, detail=PROMO_USED_BY_YOU)
+        return limit - used
 
     def _uses(self, promo_id: str) -> int:
         return sum(1 for r in self.redemptions if r["promo_code_id"] == promo_id and r["released_at"] is None)

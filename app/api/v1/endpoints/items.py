@@ -35,6 +35,10 @@ from schemas.items import ListingCreate, ListingUpdate, ReportCreate, RequestCre
 
 router = APIRouter()
 
+# A new book alerts every user, so publishing sends more than one batch, but stops after this long;
+# the rest go out with the next actions (see docs/notifications.md).
+NEW_LISTING_PUSH_BUDGET_SECONDS = 3.0
+
 @router.get("/listings")
 def get_listings(
     q: str | None = None,
@@ -140,7 +144,10 @@ def create_listing(payload: ListingCreate, authorization: str | None = Header(de
 
     supabase = get_supabase_service()
     if supabase is not None:
-        return supabase.create_listing(payload.model_dump(), user_id)
+        # The notify_listing_created trigger (migration 018) has queued a "new book" notification for everyone else.
+        created = supabase.create_listing(payload.model_dump(), user_id)
+        dispatch_pending_notifications(time_budget_seconds=NEW_LISTING_PUSH_BUDGET_SECONDS)
+        return created
 
     listing_id = f"listing-{len(LISTINGS) + 1}"
     item = {
@@ -160,6 +167,8 @@ def create_listing(payload: ListingCreate, authorization: str | None = Header(de
         "created_at": "2026-10-24T00:00:00Z",
     }
     LISTINGS.insert(0, item)
+    MEMORY_NOTIFICATION_STORE.emit_new_listing(user_id, listing_id, payload.title, item["seller_name"])
+    dispatch_pending_notifications(time_budget_seconds=NEW_LISTING_PUSH_BUDGET_SECONDS)
     return {**item, "id": listing_id}
 
 @router.patch("/listings/{listing_id}")
@@ -268,7 +277,7 @@ def check_promo_code(code: str, authorization: str | None = Header(default=None)
     promo_check_by_user.hit(user_id)
     if _promo(code) is None or len(code) > 32:
         raise HTTPException(status_code=400, detail=PROMO_INVALID)
-    return get_promo_store().check(code)
+    return get_promo_store().check(code, user_id)
 
 
 def _promo(code: str | None) -> str | None:

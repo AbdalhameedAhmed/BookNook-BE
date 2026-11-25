@@ -20,10 +20,11 @@ SUBSCRIPTION = {
 }
 
 
-def notifications(user: User) -> list[dict]:
+def notifications(user: User, new_books: bool = False) -> list[dict]:
+    """The user's notifications. "New book" broadcasts are left out unless asked for (see the tests below)."""
     response = client.get("/api/v1/me/notifications", headers=user.headers)
     assert response.status_code == 200, response.text
-    return response.json()["items"]
+    return [n for n in response.json()["items"] if new_books or n["kind"] != "listing_new"]
 
 
 def kinds(user: User) -> list[str]:
@@ -393,6 +394,94 @@ def test_new_report_alerts_moderators() -> None:
     assert item["kind"] == "report_new" and item["listing_id"] == listing
     assert item["data"] == {"actor_name": "Reporter", "listing_title": "sale book", "preview": "Fake listing"}
     assert notifications(seller) == [] and notifications(reporter) == []
+
+
+# --- New books (migration 018) ---
+
+def new_book_notes(user: User) -> list[dict]:
+    return [n for n in notifications(user, new_books=True) if n["kind"] == "listing_new"]
+
+
+def test_new_listing_notifies_everyone_except_the_seller() -> None:
+    seller, reader, mod = User("seller@x.test"), User("reader@x.test"), User("mod@x.test", role="moderator")
+
+    listing = seller.list_book(price=100)
+
+    for user in (reader, mod):
+        [item] = new_book_notes(user)
+        assert item["listing_id"] == listing and item["count"] == 1
+        assert item["data"] == {"listing_title": "sale book", "actor_name": "Seller"}
+        assert item["read_at"] is None
+    assert new_book_notes(seller) == [], "nobody is notified about their own listing"
+
+
+def test_new_listings_collapse_while_unread() -> None:
+    seller, other_seller, reader = User("seller@x.test"), User("other@x.test"), User("reader@x.test")
+    seller.list_book(price=100)
+    seller.list_book("free")
+    latest = other_seller.list_book("exchange")
+
+    [item] = new_book_notes(reader)
+    assert item["count"] == 3 and item["listing_id"] == latest
+    assert item["data"] == {"listing_title": "exchange book", "actor_name": "Other"}
+    assert client.get("/api/v1/me/notifications/unread-count", headers=reader.headers).json() == {"unread_count": 1}
+
+    client.post("/api/v1/me/notifications/read", headers=reader.headers, json={"ids": [item["id"]]})
+    seller.list_book(price=20)
+    assert [n["count"] for n in new_book_notes(reader)] == [1, 3], "a read notification starts a new one"
+
+
+def test_new_listing_is_pushed_not_emailed(push_on, monkeypatch: pytest.MonkeyPatch) -> None:
+    sent_emails: list = []
+    monkeypatch.setenv("NOTIFICATION_EMAILS", "on")
+    monkeypatch.setattr(push, "send_notification_emails", lambda emails: sent_emails.extend(emails))
+    seller, reader = User("seller@x.test"), confirmed(User("reader@x.test"))
+    client.post("/api/v1/me/push-subscriptions", headers=reader.headers, json=SUBSCRIPTION)
+
+    listing = seller.list_book(price=100)
+    seller.list_book("free")
+
+    assert len(push_on) == 2, "each new book alerts the device"
+    first, second = push_on
+    assert '"title": "New book on Rfoof"' in first["data"] and "Seller listed “sale book”" in first["data"]
+    assert f'"url": "/books/{listing}"' in first["data"] and '"tag": "new-books"' in first["data"]
+    assert '"title": "2 new books on Rfoof"' in second["data"], "the second alert replaces the first"
+    assert '"url": "/"' in second["data"] and '"tag": "new-books"' in second["data"]
+    assert sent_emails == [], "new books are never emailed"
+
+
+def test_new_listing_alerts_every_user_in_one_publish(push_on) -> None:
+    seller = User("seller@x.test")
+    readers = [User(f"r{i}@x.test") for i in range(push.CLAIM_BATCH + 5)]
+    for i, reader in enumerate(readers):
+        body = {**SUBSCRIPTION, "endpoint": f"https://push.example.test/{i}"}
+        assert client.post("/api/v1/me/push-subscriptions", headers=reader.headers, json=body).status_code == 204
+
+    seller.list_book(price=100)
+
+    assert len(push_on) == len(readers), "more than one batch goes out within the time budget"
+
+
+def test_personal_notifications_are_pushed_before_new_books(push_on) -> None:
+    seller, buyer = User("seller@x.test"), User("buyer@x.test", balance=500)
+    for i in range(push.CLAIM_BATCH):
+        User(f"r{i}@x.test")
+    listing = seller.list_book(price=100)
+    # Leave a backlog of unsent new-book alerts, then queue a personal one behind it.
+    for note in MEMORY_NOTIFICATION_STORE.notifications:
+        note["pushed_at"] = None
+    buyer.request(listing)  # sends one batch, smaller than the backlog
+
+    request_note = next(n for n in MEMORY_NOTIFICATION_STORE.notifications if n["kind"] == "request_new")
+    assert request_note["pushed_at"] is not None, "the request alert went out in the first batch"
+
+
+def test_new_book_payload_treats_user_values_as_plain_text() -> None:
+    payload = push.build_payload({"id": "n1", "kind": "listing_new", "transaction_id": None, "listing_id": "../admin",
+                                  "count": 1, "data": {"actor_name": "<b>x</b>", "listing_title": "{actor}"}}, "ar")
+    assert payload["title"] == "كتاب جديد على رفوف"
+    assert payload["body"] == "عرض <b>x</b> «{actor}»."
+    assert payload["url"] == "/books/..%2Fadmin"
 
 
 # --- Email for request updates only ---

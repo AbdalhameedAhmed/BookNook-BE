@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any
+from urllib.parse import quote
 
 from pywebpush import WebPushException, webpush
 
@@ -48,6 +50,8 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
         "report_new": ("New report", "{actor} reported “{title}”: {preview}"),
         "report_user": ("New report", "{actor} reported a user: {preview}"),
         "referral_reward": ("You earned a free request", "{actor} joined from your invite and completed a deal. Your next Rfoof fee is on us."),
+        "listing_new": ("New book on Rfoof", "{actor} listed “{title}”."),
+        "listing_new_many": ("{count} new books on Rfoof", "Latest: “{title}” from {actor}."),
     },
     "ar": {
         "request_new": ("طلب جديد", "{actor} يريد «{title}»"),
@@ -65,6 +69,8 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
         "report_new": ("بلاغ جديد", "أبلغ {actor} عن «{title}»: {preview}"),
         "report_user": ("بلاغ جديد", "أبلغ {actor} عن مستخدم: {preview}"),
         "referral_reward": ("ربحت طلبًا مجانيًا", "انضم {actor} من دعوتك وأتمّ صفقة. رسوم رفوف القادمة علينا."),
+        "listing_new": ("كتاب جديد على رفوف", "عرض {actor} «{title}»."),
+        "listing_new_many": ("{count} كتب جديدة على رفوف", "الأحدث: «{title}» من {actor}."),
     },
 }
 MONEY_SUFFIX = {
@@ -88,6 +94,7 @@ LINKS = {
     "topup_submitted": "/admin/topups",
     "report_new": "/admin",
     "referral_reward": "/account/invite",
+    "listing_new": "/",
 }
 
 # Only request updates are emailed (plus the auth emails in core/email.py).
@@ -109,6 +116,15 @@ def link_for(kind: str) -> str:
     return LINKS.get(kind, "/notifications")
 
 
+def link_for_notification(notification: dict[str, Any]) -> str:
+    """A single new book opens its page; several open the catalogue."""
+    kind = str(notification["kind"])
+    listing_id = notification.get("listing_id")
+    if kind == "listing_new" and int(notification.get("count") or 1) == 1 and listing_id:
+        return f"/books/{quote(str(listing_id), safe='')}"
+    return link_for(kind)
+
+
 def build_payload(notification: dict[str, Any], lang: str) -> dict[str, Any]:
     """Title/body text for one notification. User-supplied values are inserted as plain text."""
     lang = lang if lang in TEXTS else "en"
@@ -121,21 +137,24 @@ def build_payload(notification: dict[str, Any], lang: str) -> dict[str, Any]:
         "title": data.get("listing_title") or "",
         "preview": data.get("preview") or "",
         "amount": amount or 0,
+        "count": int(notification.get("count") or 1),
         "refund": suffix["refund"].format(amount=amount) if amount else "",
         "payout": suffix["payout"].format(amount=amount) if amount else "",
     }
-    text_key = "report_user" if kind == "report_new" and not data.get("listing_title") else kind
+    count = values["count"]
+    text_key = ("report_user" if kind == "report_new" and not data.get("listing_title")
+                else "listing_new_many" if kind == "listing_new" and count > 1 else kind)
     title, body = TEXTS[lang].get(text_key, ("Rfoof", ""))
-    count = int(notification.get("count") or 1)
     if kind == "message" and count > 1:
         body = f"({count}) {body}"
     return {
         "title": title.format(**values),
         "body": body.format(**values),
-        "url": link_for(kind),
-        # One alert per handover thread / request on the device: newer pushes replace older ones.
+        "url": link_for_notification(notification),
+        # One alert per handover thread / request on the device, and one for new books:
+        # newer pushes replace older ones.
         "tag": f"tx-{notification['transaction_id']}" if notification.get("transaction_id")
-        else f"n-{notification['id']}",
+        else "new-books" if kind == "listing_new" else f"n-{notification['id']}",
         "kind": kind,
     }
 
@@ -144,22 +163,35 @@ def notification_emails_enabled() -> bool:
     return os.getenv("NOTIFICATION_EMAILS", "on").strip().lower() not in {"off", "false", "0", "no"}
 
 
-def dispatch_pending_notifications() -> int:
-    """Pushes every undelivered notification to its owner's browsers and emails the request ones.
+def dispatch_pending_notifications(time_budget_seconds: float | None = None) -> int:
+    """Pushes undelivered notifications to their owners' browsers and emails the request ones.
 
+    Sends one batch, or with ``time_budget_seconds`` keeps claiming batches until none are left or
+    the budget is spent (used after publishing a book, which notifies every user).
     Returns the number of pushes sent. Never raises: the user's action already succeeded.
     """
+    deadline = None if time_budget_seconds is None else time.monotonic() + time_budget_seconds
+    sent = 0
+    while True:
+        batch_sent, claimed = _dispatch_batch()
+        sent += batch_sent
+        if deadline is None or claimed < CLAIM_BATCH or time.monotonic() >= deadline:
+            return sent
+
+
+def _dispatch_batch() -> tuple[int, int]:
+    """Delivers one claimed batch. Returns (pushes sent, notifications claimed)."""
     pushing = push_enabled()
     emailing = notification_emails_enabled()
     if not (pushing or emailing):
-        return 0
+        return 0, 0
     store = get_notification_store()
     sent = 0
     try:
         claimed = store.claim_unpushed(CLAIM_BATCH)
     except Exception:  # noqa: BLE001 - never fail the user's request over a notification
         logger.exception("Could not claim notifications for delivery")
-        return 0
+        return 0, 0
     emails = []
     for notification in claimed:
         if pushing:
@@ -170,7 +202,7 @@ def dispatch_pending_notifications() -> int:
             emails.append(build_email(notification))
     if emails:
         send_notification_emails(emails)
-    return sent
+    return sent, len(claimed)
 
 
 def build_email(notification: dict[str, Any]) -> NotificationEmail:

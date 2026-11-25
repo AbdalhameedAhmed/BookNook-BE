@@ -1,6 +1,6 @@
 """In-app notifications and Web Push subscriptions.
 
-With Supabase, notification rows are written by the triggers in migrations 011 and 012, so this store only
+With Supabase, notification rows are written by the triggers in migrations 011, 012 and 018, so this store only
 reads, marks read, and manages push subscriptions. The memory store mirrors those triggers through
 ``emit()``, which the memory deal and wallet stores call at the same points. See docs/notifications.md.
 """
@@ -19,6 +19,8 @@ MAX_PAGE_SIZE = 100
 MAX_SUBSCRIPTIONS_PER_USER = 10
 PREVIEW_LENGTH = 80
 PUSH_WINDOW = timedelta(days=1)
+# While unread, these bump one row's count instead of adding rows: chat per handover, new books per user.
+COLLAPSING_KINDS = frozenset({"message", "listing_new"})
 READ_RETENTION = timedelta(days=90)
 
 
@@ -51,7 +53,7 @@ class SupabaseNotificationStore:
 
 
 class MemoryNotificationStore:
-    """Demo/test-only mirror of migrations 011 and 012. Keep the two in step."""
+    """Demo/test-only mirror of migrations 011, 012 and 018. Keep them in step."""
 
     def __init__(self) -> None:
         self._lock = RLock()
@@ -67,11 +69,13 @@ class MemoryNotificationStore:
             return
         data = {k: v for k, v in data.items() if v is not None}
         with self._lock:
-            if kind == "message":
-                row = next((n for n in self.notifications if n["user_id"] == user_id and n["kind"] == "message"
+            if kind in COLLAPSING_KINDS:
+                row = next((n for n in self.notifications if n["user_id"] == user_id and n["kind"] == kind
                             and n["transaction_id"] == transaction_id and n["read_at"] is None), None)
                 if row is not None:
                     row.update(count=row["count"] + 1, data=data, created_at=_now(), pushed_at=None)
+                    if kind == "listing_new":
+                        row["listing_id"] = listing_id
                     return
             self.notifications.append({
                 "id": str(uuid4()), "user_id": user_id, "kind": kind, "transaction_id": transaction_id,
@@ -85,6 +89,13 @@ class MemoryNotificationStore:
         for moderator_id in MEMORY_AUTH_STORE.moderator_ids():
             if moderator_id != actor_id:
                 self.emit(moderator_id, kind, data, listing_id=listing_id, topup_id=topup_id)
+
+    def emit_new_listing(self, seller_id: str, listing_id: str, title: str, seller_name: str | None) -> None:
+        """Mirror of notify_on_listing_created (migration 018): every user except the seller."""
+        for user_id in list(MEMORY_AUTH_STORE.users):
+            if user_id != seller_id:
+                self.emit(user_id, "listing_new", {"listing_title": title, "actor_name": seller_name},
+                          listing_id=listing_id)
 
     def list(self, user_id: str, limit: int, before: datetime | None) -> dict[str, Any]:
         with self._lock:
@@ -131,8 +142,9 @@ class MemoryNotificationStore:
     def claim_unpushed(self, limit: int) -> list[dict[str, Any]]:
         cutoff = _now() - PUSH_WINDOW
         with self._lock:
+            # Personal notifications before the new-book broadcast, as in migration 018.
             rows = sorted((n for n in self.notifications if n["pushed_at"] is None and n["created_at"] > cutoff),
-                          key=lambda n: n["created_at"])[:limit]
+                          key=lambda n: (n["kind"] == "listing_new", n["created_at"]))[:limit]
             claimed = []
             for n in rows:
                 n["pushed_at"] = _now()

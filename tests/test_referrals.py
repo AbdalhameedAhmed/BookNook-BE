@@ -110,7 +110,8 @@ def test_completed_handover_earns_one_free_request_once_per_friend() -> None:
     complete_sale(friend, User("seller2@x.test"))
 
     assert summary(inviter)["free_requests_earned"] == 1
-    kinds = [n["kind"] for n in MEMORY_NOTIFICATION_STORE.notifications if n["user_id"] == inviter.id]
+    kinds = [n["kind"] for n in MEMORY_NOTIFICATION_STORE.notifications
+             if n["user_id"] == inviter.id and n["kind"] != "listing_new"]
     assert kinds == ["referral_reward"]
 
 
