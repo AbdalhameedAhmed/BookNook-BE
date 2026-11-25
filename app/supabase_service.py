@@ -142,7 +142,7 @@ class SupabaseService:
                 f"{self.url}/storage/v1/object/book-images/{path}",
                 content=content,
                 headers=headers,
-                timeout=30,
+                timeout=120,
             )
         except httpx.HTTPError as error:
             raise HTTPException(status_code=503, detail="Image storage service unavailable") from error

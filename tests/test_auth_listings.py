@@ -141,3 +141,17 @@ def test_non_owner_cannot_mark_listing_complete() -> None:
     )
 
     assert response.status_code == 403
+
+
+def test_book_photo_up_to_twenty_mb_passes_the_size_check() -> None:
+    """A typical 8 MB phone photo is no longer rejected as too large (storage may still be unavailable in tests)."""
+    content = b"\x89PNG\r\n\x1a\n" + b"0" * (8 * 1024 * 1024)
+
+    response = client.post(
+        "/api/v1/listing-images",
+        headers={"Authorization": "Bearer demo-user-1"},
+        files={"file": ("book.png", content, "image/png")},
+    )
+
+    assert MAX_BOOK_IMAGE_SIZE_BYTES == 20 * 1024 * 1024
+    assert response.status_code != 413

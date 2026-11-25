@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from core.auth_settings import get_auth_settings
+from core.config import MAX_RECEIPT_SIZE_BYTES
 from core.security import create_access_token
 from crud.crud_user import MEMORY_AUTH_STORE
 from supabase_service import SupabaseService, get_supabase_service
@@ -133,7 +134,7 @@ def test_receipt_must_be_a_real_image(reader) -> None:
 
 
 def test_oversized_receipt_is_rejected(reader) -> None:
-    huge = PNG + b"\x00" * (5 * 1024 * 1024)
+    huge = PNG + b"\x00" * MAX_RECEIPT_SIZE_BYTES
     assert submit_topup(reader, receipt=huge).status_code == 413
 
 

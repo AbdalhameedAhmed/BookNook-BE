@@ -11,7 +11,9 @@ VALID_GOVERNORATES = {
     "asyut", "sohag", "qena", "luxor", "aswan", "new_valley", "matrouh",
 }
 DEMO_USERS = {"demo-user-1", "demo-user-2"}
-MAX_BOOK_IMAGE_SIZE_BYTES = 2 * 1024 * 1024
+# Phone photos are often 5–15 MB, so image uploads (book photos, profile photos, receipts) allow 20 MB.
+MAX_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_BOOK_IMAGE_SIZE_BYTES = MAX_IMAGE_UPLOAD_BYTES
 
 IMAGE_SIGNATURES = {
     "image/jpeg": lambda content: content.startswith(b"\xff\xd8\xff"),
@@ -25,7 +27,7 @@ IMAGE_SIGNATURES = {
 
 # --- Wallet top-ups ---
 # Receipts are phone screenshots, which are often larger than book photos.
-MAX_RECEIPT_SIZE_BYTES = 5 * 1024 * 1024
+MAX_RECEIPT_SIZE_BYTES = MAX_IMAGE_UPLOAD_BYTES
 MIN_TOPUP_EGP = 1
 MAX_TOPUP_EGP = 50_000
 # Abuse guard: a user cannot pile up unreviewed top-ups.

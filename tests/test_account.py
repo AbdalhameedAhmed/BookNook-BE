@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from api.v1.endpoints import account, auth
+from core.config import MAX_BOOK_IMAGE_SIZE_BYTES
 from core.security import create_access_token, hash_password
 from crud.crud_user import MEMORY_AUTH_STORE
 
@@ -112,7 +113,7 @@ def test_email_change_is_rate_limited(mailbox) -> None:
 @pytest.mark.parametrize("content,content_type,expected", [
     (b"GIF89a....", "image/gif", 415),
     (b"not really a png", "image/png", 415),
-    (b"\x89PNG\r\n\x1a\n" + b"0" * (2 * 1024 * 1024), "image/png", 413),
+    (b"\x89PNG\r\n\x1a\n" + b"0" * MAX_BOOK_IMAGE_SIZE_BYTES, "image/png", 413),
 ])
 def test_invalid_photos_are_rejected(content: bytes, content_type: str, expected: int) -> None:
     _, headers = make_user()

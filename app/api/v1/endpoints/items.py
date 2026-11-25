@@ -124,7 +124,7 @@ def upload_listing_image(
     seller_id = _require_auth(authorization)
     content = file.file.read(MAX_BOOK_IMAGE_SIZE_BYTES + 1)
     if len(content) > MAX_BOOK_IMAGE_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail="Book photos must be 2 MB or smaller")
+        raise HTTPException(status_code=413, detail="Book photos must be 20 MB or smaller")
 
     content_type = file.content_type or ""
     signature_check = IMAGE_SIGNATURES.get(content_type)

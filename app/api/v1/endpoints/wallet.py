@@ -70,7 +70,7 @@ def create_topup(
 
     content = receipt.file.read(MAX_RECEIPT_SIZE_BYTES + 1)
     if len(content) > MAX_RECEIPT_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail="Receipt images must be 5 MB or smaller")
+        raise HTTPException(status_code=413, detail="Receipt images must be 20 MB or smaller")
     content_type = receipt.content_type or ""
     signature_check = IMAGE_SIGNATURES.get(content_type)
     if not content or signature_check is None or not signature_check(content):

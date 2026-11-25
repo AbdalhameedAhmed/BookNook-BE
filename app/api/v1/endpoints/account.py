@@ -34,7 +34,7 @@ def upload_avatar(user_id: CurrentUserId, file: UploadFile = File(...)) -> dict[
     """Replaces the profile photo. The previous photo is deleted from storage."""
     content = file.file.read(MAX_AVATAR_SIZE_BYTES + 1)
     if len(content) > MAX_AVATAR_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail="Profile photos must be 2 MB or smaller")
+        raise HTTPException(status_code=413, detail="Profile photos must be 20 MB or smaller")
     content_type = file.content_type or ""
     signature_check = IMAGE_SIGNATURES.get(content_type)
     if not content or signature_check is None or not signature_check(content):
