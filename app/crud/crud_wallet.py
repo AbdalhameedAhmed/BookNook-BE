@@ -3,8 +3,10 @@
 ``get_wallet_store()`` returns a Supabase-backed store in persistent mode and an
 in-memory store in demo/test mode. Both expose the same methods.
 
-Balances only change through ``approve_topup``: a moderator checks the receipt
-against the platform's e-wallet account before crediting the user.
+Top-ups credit a balance only through ``approve_topup``: a moderator checks the receipt
+against the platform's e-wallet account before crediting the user. Withdrawals take the
+amount from the balance when requested; a moderator sends the money by hand and marks the
+request paid, or rejects it, which returns the amount.
 """
 
 from __future__ import annotations
@@ -116,6 +118,45 @@ class SupabaseWalletStore:
     def overview(self) -> dict[str, Any]:
         return self.service.rpc("admin_overview", {})
 
+    def request_withdrawal(self, user_id: str, recipient_number: str, amount_egp: int,
+                           max_pending: int) -> dict[str, Any]:
+        return self.service.rpc("request_wallet_withdrawal", {
+            "p_user_id": user_id, "p_recipient_number": recipient_number, "p_amount": amount_egp,
+            "p_max_pending": max_pending,
+        })
+
+    def list_withdrawals(self, *, user_id: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
+        params = {
+            "select": "*,owner:users!wallet_withdrawals_user_id_fkey(email)",
+            "order": "created_at.asc" if status == "pending" else "created_at.desc",
+            "limit": "200",
+        }
+        if user_id:
+            params["user_id"] = f"eq.{user_id}"
+        if status:
+            params["status"] = f"eq.{status}"
+        rows = self.service.rest("GET", "wallet_withdrawals", params=params).json()
+        for row in rows:
+            row["user_email"] = (row.pop("owner", None) or {}).get("email")
+        return rows
+
+    def topup_numbers(self, user_ids: list[str]) -> dict[str, set[str]]:
+        """Numbers each user has had a top-up approved from (moderators compare payout numbers against them)."""
+        if not user_ids:
+            return {}
+        rows = self.service.rest("GET", "wallet_topups", params={
+            "select": "user_id,sender_number", "status": "eq.approved", "user_id": f"in.({','.join(user_ids)})",
+        }).json()
+        numbers: dict[str, set[str]] = {}
+        for row in rows:
+            numbers.setdefault(str(row["user_id"]), set()).add(str(row["sender_number"]))
+        return numbers
+
+    def review_withdrawal(self, withdrawal_id: str, reviewer_id: str, status: str, note: str | None) -> dict[str, Any]:
+        return self.service.rpc("review_wallet_withdrawal", {
+            "p_withdrawal_id": withdrawal_id, "p_reviewer_id": reviewer_id, "p_status": status, "p_note": note or "",
+        })
+
     def _storage(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         headers = {"apikey": self.service.api_key, **kwargs.pop("headers", {})}
         if self.service.is_legacy_jwt_key:
@@ -137,6 +178,7 @@ class MemoryWalletStore:
         self.balances: dict[str, int] = {}
         self.topups: dict[str, dict[str, Any]] = {}
         self.receipts: dict[str, tuple[bytes, str]] = {}
+        self.withdrawals: dict[str, dict[str, Any]] = {}
         # Ledger: user_id None rows are platform fee revenue (mirrors public.wallet_entries).
         self.entries: list[dict[str, Any]] = []
 
@@ -144,7 +186,8 @@ class MemoryWalletStore:
         return self.balances.get(user_id, 0)
 
     def adjust(self, user_id: str, delta: int, kind: str, *, request_id: str | None = None,
-               transaction_id: str | None = None, topup_id: str | None = None) -> None:
+               transaction_id: str | None = None, topup_id: str | None = None,
+               withdrawal_id: str | None = None) -> None:
         """Changes a balance and records it; refuses to go negative (callers check before mutating)."""
         if delta == 0:
             return
@@ -152,7 +195,7 @@ class MemoryWalletStore:
         if balance < 0:
             raise HTTPException(status_code=402, detail=INSUFFICIENT_FUNDS)
         self.balances[user_id] = balance
-        self._entry(user_id, delta, kind, request_id, transaction_id, topup_id)
+        self._entry(user_id, delta, kind, request_id, transaction_id, topup_id, withdrawal_id)
 
     def record_fee(self, amount: int, transaction_id: str) -> None:
         if amount > 0:
@@ -168,10 +211,11 @@ class MemoryWalletStore:
         return {"balance_egp": self.get_balance(user_id), "held_egp": held, "entries": entries}
 
     def _entry(self, user_id: str | None, amount: int, kind: str, request_id: str | None,
-               transaction_id: str | None, topup_id: str | None) -> None:
+               transaction_id: str | None, topup_id: str | None, withdrawal_id: str | None = None) -> None:
         self.entries.append({
             "id": str(uuid4()), "user_id": user_id, "amount_egp": amount, "kind": kind, "request_id": request_id,
-            "transaction_id": transaction_id, "topup_id": topup_id, "created_at": _now(),
+            "transaction_id": transaction_id, "topup_id": topup_id, "withdrawal_id": withdrawal_id,
+            "created_at": _now(),
         })
 
     def count_pending(self, user_id: str) -> int:
@@ -241,12 +285,70 @@ class MemoryWalletStore:
             "reports_open": sum(1 for item in REPORTS if item["status"] in {"open", "reviewing"}),
             "topups_pending": len(pending),
             "topups_pending_egp": sum(t["amount_egp"] for t in pending),
+            "withdrawals_pending": sum(1 for w in self.withdrawals.values() if w["status"] == "pending"),
+            "withdrawals_pending_egp": sum(w["amount_egp"] for w in self.withdrawals.values() if w["status"] == "pending"),
+            "withdrawals_paid_egp": sum(w["amount_egp"] for w in self.withdrawals.values() if w["status"] == "paid"),
             "wallet_balance_total_egp": sum(self.balances.values()),
             "held_total_egp": sum(int(r.get("held_egp") or 0) for r in REQUESTS if r["status"] == "pending")
             + sum(int(t.get("buyer_held_egp") or 0) + int(t.get("seller_held_egp") or 0)
                   for t in TRANSACTIONS if t["status"] == "arranging"),
             "platform_revenue_egp": sum(e["amount_egp"] for e in self.entries if e["kind"] == "fee"),
         }
+
+    def request_withdrawal(self, user_id: str, recipient_number: str, amount_egp: int,
+                           max_pending: int) -> dict[str, Any]:
+        with self._lock:
+            pending = sum(1 for w in self.withdrawals.values() if w["user_id"] == user_id and w["status"] == "pending")
+            if pending >= max_pending:
+                raise HTTPException(status_code=409, detail="You have too many withdrawals waiting to be paid")
+            if self.get_balance(user_id) < amount_egp:
+                raise HTTPException(status_code=402, detail=INSUFFICIENT_FUNDS)
+            now = _now()
+            withdrawal = {
+                "id": str(uuid4()), "user_id": user_id, "method": "e_wallet", "recipient_number": recipient_number,
+                "amount_egp": amount_egp, "status": "pending", "review_note": None, "reviewed_by": None,
+                "reviewed_at": None, "created_at": now, "updated_at": now,
+            }
+            self.withdrawals[withdrawal["id"]] = withdrawal
+            self.adjust(user_id, -amount_egp, "withdrawal", withdrawal_id=withdrawal["id"])
+        # Memory-mode mirror of the migration 019 trigger.
+        MEMORY_NOTIFICATION_STORE.emit_to_moderators(
+            user_id, "withdrawal_requested",
+            {"actor_name": MEMORY_AUTH_STORE.get_display_name(user_id), "amount_egp": amount_egp},
+        )
+        return dict(withdrawal)
+
+    def list_withdrawals(self, *, user_id: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
+        rows = [
+            {**w, "user_email": (MEMORY_AUTH_STORE.get_user(w["user_id"]) or {}).get("email")}
+            for w in self.withdrawals.values()
+            if (user_id is None or w["user_id"] == user_id) and (status is None or w["status"] == status)
+        ]
+        rows.sort(key=lambda w: w["created_at"], reverse=status != "pending")
+        return rows
+
+    def topup_numbers(self, user_ids: list[str]) -> dict[str, set[str]]:
+        numbers: dict[str, set[str]] = {}
+        for topup in self.topups.values():
+            if topup["user_id"] in user_ids and topup["status"] == "approved":
+                numbers.setdefault(topup["user_id"], set()).add(topup["sender_number"])
+        return numbers
+
+    def review_withdrawal(self, withdrawal_id: str, reviewer_id: str, status: str, note: str | None) -> dict[str, Any]:
+        with self._lock:
+            withdrawal = self.withdrawals.get(withdrawal_id)
+            if withdrawal is None:
+                raise HTTPException(status_code=404, detail="Withdrawal not found")
+            if withdrawal["status"] != "pending":
+                raise HTTPException(status_code=409, detail="Only pending withdrawals can be reviewed")
+            if status == "rejected":
+                self.adjust(withdrawal["user_id"], withdrawal["amount_egp"], "refund", withdrawal_id=withdrawal_id)
+            reviewed = self._review(withdrawal, status, reviewer_id, (note or "").strip() or None)
+        MEMORY_NOTIFICATION_STORE.emit(
+            reviewed["user_id"], f"withdrawal_{status}",
+            {"amount_egp": reviewed["amount_egp"], "note": (reviewed.get("review_note") or "")[:200] or None},
+        )
+        return reviewed
 
     def _pending(self, topup_id: str) -> dict[str, Any]:
         topup = self.topups.get(topup_id)

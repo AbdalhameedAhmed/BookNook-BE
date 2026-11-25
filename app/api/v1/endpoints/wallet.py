@@ -1,4 +1,4 @@
-"""The signed-in user's wallet: balance, charging options, and e-wallet top-up submissions."""
+"""The signed-in user's wallet: balance, charging options, top-up submissions, and withdrawal requests."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from api.deps import get_current_user_id
 from core.config import (
     IMAGE_SIGNATURES,
     MAX_PENDING_TOPUPS_PER_USER,
+    MAX_PENDING_WITHDRAWALS_PER_USER,
     MAX_RECEIPT_SIZE_BYTES,
     MAX_TOPUP_EGP,
     MIN_TOPUP_EGP,
@@ -18,9 +19,10 @@ from core.config import (
     platform_fee_egp,
 )
 from core.push import dispatch_pending_notifications
-from core.rate_limit import topup_by_user
+from core.rate_limit import topup_by_user, withdrawal_by_user
 from crud.crud_referrals import get_referral_store
 from crud.crud_wallet import charging_options, ewallet_recipient_number, get_wallet_store
+from schemas.wallet import WithdrawalCreate
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
@@ -30,6 +32,8 @@ EGYPT_MOBILE = re.compile(r"^01[0125]\d{8}$")
 # Fields shown to the wallet owner. Reviewer identity and the storage path stay internal.
 OWNER_FIELDS = ("id", "method", "sender_number", "recipient_number", "amount_egp", "status",
                 "review_note", "created_at", "reviewed_at")
+WITHDRAWAL_OWNER_FIELDS = ("id", "method", "recipient_number", "amount_egp", "status", "review_note",
+                           "created_at", "reviewed_at")
 
 
 @router.get("")
@@ -46,6 +50,7 @@ def get_wallet(user_id: CurrentUserId) -> dict[str, object]:
         # Fees that will be waived automatically (earned by inviting friends; see docs/referrals.md).
         "free_requests_available": get_referral_store().available(user_id),
         "topups": [_owner_view(row) for row in store.list_topups(user_id=user_id)],
+        "withdrawals": [_withdrawal_view(row) for row in store.list_withdrawals(user_id=user_id)],
     }
 
 
@@ -89,6 +94,20 @@ def create_topup(
     return _owner_view(topup)
 
 
+@router.post("/withdrawals", status_code=status.HTTP_201_CREATED)
+def create_withdrawal(payload: WithdrawalCreate, user_id: CurrentUserId) -> dict[str, object]:
+    """Takes the amount from the balance now; a moderator sends it by hand and marks it paid (or returns it)."""
+    recipient = normalize_egypt_mobile(payload.recipient_number)
+    if recipient is None:
+        raise HTTPException(status_code=400, detail="Enter a valid Egyptian mobile number, like 01012345678")
+    withdrawal_by_user.hit(user_id)
+    withdrawal = get_wallet_store().request_withdrawal(
+        user_id, recipient, payload.amount_egp, MAX_PENDING_WITHDRAWALS_PER_USER,
+    )
+    dispatch_pending_notifications()
+    return _withdrawal_view(withdrawal)
+
+
 def normalize_egypt_mobile(value: str) -> str | None:
     digits = re.sub(r"[\s\-()]", "", value)
     for prefix in ("+20", "0020"):
@@ -99,3 +118,7 @@ def normalize_egypt_mobile(value: str) -> str | None:
 
 def _owner_view(row: dict[str, object]) -> dict[str, object]:
     return {key: row.get(key) for key in OWNER_FIELDS}
+
+
+def _withdrawal_view(row: dict[str, object]) -> dict[str, object]:
+    return {key: row.get(key) for key in WITHDRAWAL_OWNER_FIELDS}

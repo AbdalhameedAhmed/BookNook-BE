@@ -25,6 +25,11 @@ MAX_TOPUP_EGP = 50_000
 MAX_PENDING_TOPUPS_PER_USER = 5
 TOPUP_METHODS = {"e_wallet"}
 
+# --- Wallet withdrawals (moderators send the money by hand, then mark the request paid) ---
+MIN_WITHDRAWAL_EGP = 1
+MAX_WITHDRAWAL_EGP = 50_000
+MAX_PENDING_WITHDRAWALS_PER_USER = 3
+
 
 # --- Platform fee ---
 DEFAULT_PLATFORM_FEE_EGP = 10

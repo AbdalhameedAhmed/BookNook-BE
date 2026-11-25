@@ -54,6 +54,9 @@ auth_by_ip = RateLimiter(max_hits=60, window_seconds=15 * 60)
 # Per user: wallet top-up submissions (each one uploads a receipt and needs manual review).
 topup_by_user = RateLimiter(max_hits=10, window_seconds=60 * 60)
 
+# Per user: withdrawal requests (each one needs a manual transfer by a moderator).
+withdrawal_by_user = RateLimiter(max_hits=5, window_seconds=60 * 60)
+
 # Per user: chat messages.
 message_by_user = RateLimiter(max_hits=30, window_seconds=60)
 
@@ -68,6 +71,6 @@ email_change_by_user = RateLimiter(max_hits=5, window_seconds=60 * 60)
 avatar_upload_by_user = RateLimiter(max_hits=20, window_seconds=60 * 60)
 
 ALL_LIMITERS = (
-    login_by_email, email_send_by_email, auth_by_ip, topup_by_user, message_by_user, promo_check_by_user,
+    login_by_email, email_send_by_email, auth_by_ip, topup_by_user, withdrawal_by_user, message_by_user, promo_check_by_user,
     push_subscribe_by_user, email_change_by_user, avatar_upload_by_user,
 )
