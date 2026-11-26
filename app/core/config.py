@@ -4,12 +4,16 @@ import os
 
 VALID_CONDITIONS = {"like_new", "good", "acceptable", "heavily_used"}
 # Egypt's 27 governorates (codes match the listings_governorate_check constraint, migration 020).
-VALID_GOVERNORATES = {
-    "cairo", "giza", "alexandria", "qalyubia", "sharqia", "dakahlia", "gharbia",
-    "monufia", "kafr_el_sheikh", "beheira", "damietta", "port_said", "ismailia",
-    "suez", "north_sinai", "south_sinai", "red_sea", "fayoum", "beni_suef", "minya",
-    "asyut", "sohag", "qena", "luxor", "aswan", "new_valley", "matrouh",
+GOVERNORATE_NAMES = {
+    "cairo": "Cairo", "giza": "Giza", "alexandria": "Alexandria", "qalyubia": "Qalyubia",
+    "sharqia": "Sharqia", "dakahlia": "Dakahlia", "gharbia": "Gharbia", "monufia": "Monufia",
+    "kafr_el_sheikh": "Kafr El Sheikh", "beheira": "Beheira", "damietta": "Damietta",
+    "port_said": "Port Said", "ismailia": "Ismailia", "suez": "Suez", "north_sinai": "North Sinai",
+    "south_sinai": "South Sinai", "red_sea": "Red Sea", "fayoum": "Fayoum", "beni_suef": "Beni Suef",
+    "minya": "Minya", "asyut": "Asyut", "sohag": "Sohag", "qena": "Qena", "luxor": "Luxor",
+    "aswan": "Aswan", "new_valley": "New Valley", "matrouh": "Matrouh",
 }
+VALID_GOVERNORATES = set(GOVERNORATE_NAMES)
 DEMO_USERS = {"demo-user-1", "demo-user-2"}
 # Phone photos are often 5–15 MB, so image uploads (book photos, profile photos, receipts) allow 20 MB.
 MAX_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024
